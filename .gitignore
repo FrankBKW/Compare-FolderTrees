@@ -1,0 +1,22 @@
+# Generierte Berichte des Scripts
+Vergleich_*.html
+Vergleich_*.csv
+Ordnervergleich/
+report/
+reports/
+
+# Allgemeine Ausgaben
+*.html
+*.csv
+*.log
+
+# Windows
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
