@@ -47,6 +47,13 @@
 
 .EXAMPLE
     .\Compare-FolderTrees.ps1 "D:\Projekte" "\\nas\projekte" -ExcludeFolder '.git','node_modules' -CompareHash
+
+.NOTES
+    Version 1.1
+
+    Der Status eines Verzeichnisses wird aus den enthaltenen Dateien abgeleitet,
+    nicht aus Gesamtgroesse und Dateianzahl: zwei Ordner koennen zufaellig gleich
+    gross sein und trotzdem verschiedene Dateien enthalten.
 #>
 
 [CmdletBinding()]
@@ -161,6 +168,10 @@ function Get-TreeIndex {
     )
 
     $rootFull = (Resolve-Path -LiteralPath $Root).ProviderPath.TrimEnd('\')
+    # "D:" bedeutet unter Windows "aktuelles Verzeichnis auf D:", nicht das
+    # Laufwerkstammverzeichnis - deshalb den Backslash wieder anhaengen.
+    if ($rootFull -match '^[A-Za-z]:$') { $rootFull = $rootFull + '\' }
+    $prefixLen = $rootFull.Length
 
     $cmp    = [StringComparer]::OrdinalIgnoreCase
     $files  = New-Object 'System.Collections.Generic.Dictionary[string,object]' -ArgumentList $cmp
@@ -186,14 +197,19 @@ function Get-TreeIndex {
     }
 
     foreach ($item in $items) {
-        $rel = $item.FullName.Substring($rootFull.Length).TrimStart('\')
+        $rel = $item.FullName.Substring($prefixLen).TrimStart('\')
         if ([string]::IsNullOrEmpty($rel)) { continue }
 
         if ($ExcludeFolder.Count -gt 0) {
+            # Nur Ordnersegmente pruefen - bei Dateien bleibt der Dateiname aussen vor,
+            # sonst wuerde -ExcludeFolder ungewollt auch Dateinamen filtern.
+            $segs = $rel.Split('\')
+            $anzahl = $segs.Count
+            if (-not $item.PSIsContainer) { $anzahl = $anzahl - 1 }
             $skip = $false
-            foreach ($seg in $rel.Split('\')) {
+            for ($s = 0; $s -lt $anzahl; $s++) {
                 foreach ($ex in $ExcludeFolder) {
-                    if ($seg -like $ex) { $skip = $true; break }
+                    if ($segs[$s] -like $ex) { $skip = $true; break }
                 }
                 if ($skip) { break }
             }
@@ -274,70 +290,10 @@ $idxB = Get-TreeIndex -Root $PfadB -Filter $Filter -ExcludeFolder $ExcludeFolder
 if ($idxA.Root -eq $idxB.Root) { throw 'Pfad A und Pfad B verweisen auf denselben Ordner.' }
 
 # ----------------------------------------------------------------------------
-# 1. Verzeichnisse vergleichen
-# ----------------------------------------------------------------------------
-
-Write-Host 'Vergleiche Verzeichnisse ...' -ForegroundColor Cyan
-
-$dirKeys = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
-foreach ($k in $idxA.Dirs.Keys) { [void]$dirKeys.Add($k) }
-foreach ($k in $idxB.Dirs.Keys) { [void]$dirKeys.Add($k) }
-
-$dirRows = New-Object 'System.Collections.Generic.List[object]'
-
-foreach ($key in ($dirKeys | Sort-Object)) {
-    $a = $null; $b = $null
-    $hasA = $idxA.Dirs.TryGetValue($key, [ref]$a)
-    $hasB = $idxB.Dirs.TryGetValue($key, [ref]$b)
-
-    $hinweis = ''
-    $status  = 'Identisch'
-    if ($hasA -and -not $hasB) {
-        $status = 'Nur in A'; $hinweis = 'Fehlt in B'
-    } elseif ($hasB -and -not $hasA) {
-        $status = 'Nur in B'; $hinweis = 'Fehlt in A'
-    } else {
-        $r = New-Object 'System.Collections.Generic.List[string]'
-        if ($a.Size      -ne $b.Size)      { $r.Add('Groesse') }
-        if ($a.FileCount -ne $b.FileCount) { $r.Add('Dateianzahl') }
-        if ($r.Count -gt 0) { $status = 'Unterschiedlich'; $hinweis = ($r -join ', ') }
-    }
-
-    $sizeA  = $null; $countA = $null; $fullA = ''
-    $sizeB  = $null; $countB = $null; $fullB = ''
-    $diff   = $null
-    if ($hasA) { $sizeA = [long]$a.Size; $countA = [int]$a.FileCount; $fullA = $a.Full }
-    if ($hasB) { $sizeB = [long]$b.Size; $countB = [int]$b.FileCount; $fullB = $b.Full }
-    if ($hasA -and $hasB) { $diff = [long]($b.Size - $a.Size) }
-
-    $name  = '(Wurzelverzeichnis)'
-    $ebene = 0
-    if ($key -ne '.') {
-        $name  = Get-LeafRel $key
-        $ebene = $key.Split('\').Count
-    }
-
-    $dirRows.Add([pscustomobject]@{
-        Typ             = 'Verzeichnis'
-        Status          = $status
-        RelativerPfad   = $key
-        Name            = $name
-        Ebene           = $ebene
-        GroesseA_Bytes  = $sizeA
-        GroesseB_Bytes  = $sizeB
-        GroesseA        = (Format-Size $sizeA)
-        GroesseB        = (Format-Size $sizeB)
-        Differenz_Bytes = $diff
-        DateienA        = $countA
-        DateienB        = $countB
-        Hinweis         = $hinweis
-        PfadA           = $fullA
-        PfadB           = $fullB
-    })
-}
-
-# ----------------------------------------------------------------------------
-# 2. Dateien vergleichen
+# Dateien vergleichen
+#
+# Wichtig: Die Dateien werden VOR den Verzeichnissen ausgewertet, weil der
+# Status eines Verzeichnisses aus den enthaltenen Dateien abgeleitet wird.
 # ----------------------------------------------------------------------------
 
 Write-Host 'Vergleiche Dateien ...' -ForegroundColor Cyan
@@ -376,6 +332,12 @@ foreach ($key in ($fileKeys | Sort-Object)) {
         $deltaSec = [math]::Abs(($b.LastWrite - $a.LastWrite).TotalSeconds)
         if ($deltaSec -gt $TimeToleranceSeconds) { $r.Add('Aenderungsdatum') }
 
+        # Gleicher Name, aber andere Gross-/Kleinschreibung. Windows behandelt das
+        # als dieselbe Datei - fuer einen Abgleich ist es trotzdem ein Unterschied.
+        # Verglichen wird nur der Dateiname, damit ein abweichend geschriebener
+        # Ordnername nicht jede Datei darunter als abweichend markiert.
+        if (-not [string]::Equals($a.Name, $b.Name, [StringComparison]::Ordinal)) { $r.Add('Schreibweise') }
+
         if ($CompareHash -and $a.Size -eq $b.Size) {
             $hashA = Get-FileHashSafe -Path $a.Full -Algorithm $HashAlgorithm
             $hashB = Get-FileHashSafe -Path $b.Full -Algorithm $HashAlgorithm
@@ -397,11 +359,19 @@ foreach ($key in ($fileKeys | Sort-Object)) {
     if ($hasA) { $verzeichnis = $a.Dir; $dateiname = $a.Name }
     else       { $verzeichnis = $b.Dir; $dateiname = $b.Name }
 
+    # Bei abweichender Schreibweise beide Varianten ausweisen
+    $dateinameA = ''
+    $dateinameB = ''
+    if ($hasA) { $dateinameA = $a.Name }
+    if ($hasB) { $dateinameB = $b.Name }
+
     $fileRows.Add([pscustomobject]@{
         Typ             = 'Datei'
         Status          = $status
         RelativerPfad   = $key
         Dateiname       = $dateiname
+        DateinameA      = $dateinameA
+        DateinameB      = $dateinameB
         Verzeichnis     = $verzeichnis
         GroesseA_Bytes  = $sizeA
         GroesseB_Bytes  = $sizeB
@@ -418,6 +388,124 @@ foreach ($key in ($fileKeys | Sort-Object)) {
     })
 }
 Write-Progress -Activity 'Dateivergleich' -Completed
+
+# ----------------------------------------------------------------------------
+# Verzeichnisse vergleichen
+#
+# Der Status ergibt sich aus den enthaltenen Dateien (rekursiv), nicht aus
+# Groesse und Anzahl: zwei Ordner koennen zufaellig gleich gross sein und
+# trotzdem voellig verschiedene Dateien enthalten.
+# ----------------------------------------------------------------------------
+
+Write-Host 'Vergleiche Verzeichnisse ...' -ForegroundColor Cyan
+
+# Abweichungen der Dateien auf alle uebergeordneten Ordner hochrechnen
+$dirMarks = New-Object 'System.Collections.Generic.Dictionary[string,object]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
+
+function Add-DirMark {
+    param([string]$StartDir, [string]$Art)
+    $p = $StartDir
+    while ($true) {
+        $m = $null
+        if (-not $dirMarks.TryGetValue($p, [ref]$m)) {
+            $m = [pscustomobject]@{ FehltInB = 0; FehltInA = 0; Abweichend = 0 }
+            $dirMarks[$p] = $m
+        }
+        switch ($Art) {
+            'FehltInB'   { $m.FehltInB   = $m.FehltInB + 1 }
+            'FehltInA'   { $m.FehltInA   = $m.FehltInA + 1 }
+            'Abweichend' { $m.Abweichend = $m.Abweichend + 1 }
+        }
+        if ($p -eq '.') { break }
+        $p = Get-ParentRel $p
+    }
+}
+
+foreach ($f in $fileRows) {
+    switch ($f.Status) {
+        'Nur in A'        { Add-DirMark -StartDir $f.Verzeichnis -Art 'FehltInB' }
+        'Nur in B'        { Add-DirMark -StartDir $f.Verzeichnis -Art 'FehltInA' }
+        'Unterschiedlich' { Add-DirMark -StartDir $f.Verzeichnis -Art 'Abweichend' }
+    }
+}
+
+$dirKeys = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
+foreach ($k in $idxA.Dirs.Keys) { [void]$dirKeys.Add($k) }
+foreach ($k in $idxB.Dirs.Keys) { [void]$dirKeys.Add($k) }
+
+$dirRows = New-Object 'System.Collections.Generic.List[object]'
+
+foreach ($key in ($dirKeys | Sort-Object)) {
+    $a = $null; $b = $null
+    $hasA = $idxA.Dirs.TryGetValue($key, [ref]$a)
+    $hasB = $idxB.Dirs.TryGetValue($key, [ref]$b)
+
+    $mark = $null
+    $fehltInB = 0; $fehltInA = 0; $abweichend = 0
+    if ($dirMarks.TryGetValue($key, [ref]$mark)) {
+        $fehltInB = $mark.FehltInB; $fehltInA = $mark.FehltInA; $abweichend = $mark.Abweichend
+    }
+
+    $hinweis = ''
+    $status  = 'Identisch'
+    if ($hasA -and -not $hasB) {
+        $status = 'Nur in A'; $hinweis = 'Ordner fehlt in B'
+    } elseif ($hasB -and -not $hasA) {
+        $status = 'Nur in B'; $hinweis = 'Ordner fehlt in A'
+    } else {
+        $r = New-Object 'System.Collections.Generic.List[string]'
+        if ($fehltInB -gt 0) {
+            $verb = 'fehlen'; if ($fehltInB -eq 1) { $verb = 'fehlt' }
+            $r.Add("$fehltInB $verb in B")
+        }
+        if ($fehltInA -gt 0) {
+            $verb = 'fehlen'; if ($fehltInA -eq 1) { $verb = 'fehlt' }
+            $r.Add("$fehltInA $verb in A")
+        }
+        if ($abweichend -gt 0) { $r.Add("$abweichend abweichend") }
+        # Schreibweise des Ordnernamens selbst (nur die letzte Ebene, damit ein
+        # abweichender Elternordner nicht den ganzen Teilbaum markiert)
+        if ($key -ne '.' -and -not [string]::Equals((Get-LeafRel $a.Rel), (Get-LeafRel $b.Rel), [StringComparison]::Ordinal)) {
+            $r.Add('Schreibweise')
+        }
+        if ($r.Count -gt 0) { $status = 'Unterschiedlich'; $hinweis = ($r -join ', ') }
+    }
+
+    $sizeA  = $null; $countA = $null; $fullA = ''
+    $sizeB  = $null; $countB = $null; $fullB = ''
+    $diff   = $null
+    if ($hasA) { $sizeA = [long]$a.Size; $countA = [int]$a.FileCount; $fullA = $a.Full }
+    if ($hasB) { $sizeB = [long]$b.Size; $countB = [int]$b.FileCount; $fullB = $b.Full }
+    if ($hasA -and $hasB) { $diff = [long]($b.Size - $a.Size) }
+
+    $name  = '(Wurzelverzeichnis)'
+    $ebene = 0
+    if ($key -ne '.') {
+        $name  = Get-LeafRel $key
+        $ebene = $key.Split('\').Count
+    }
+
+    $dirRows.Add([pscustomobject]@{
+        Typ             = 'Verzeichnis'
+        Status          = $status
+        RelativerPfad   = $key
+        Name            = $name
+        Ebene           = $ebene
+        GroesseA_Bytes  = $sizeA
+        GroesseB_Bytes  = $sizeB
+        GroesseA        = (Format-Size $sizeA)
+        GroesseB        = (Format-Size $sizeB)
+        Differenz_Bytes = $diff
+        DateienA        = $countA
+        DateienB        = $countB
+        FehltInB        = $fehltInB
+        FehltInA        = $fehltInA
+        Abweichend      = $abweichend
+        Hinweis         = $hinweis
+        PfadA           = $fullA
+        PfadB           = $fullB
+    })
+}
 
 # ----------------------------------------------------------------------------
 # Kennzahlen
@@ -468,6 +556,9 @@ foreach ($d in $dirRows) {
         GeaendertB      = ''
         DateienA        = $d.DateienA
         DateienB        = $d.DateienB
+        FehltInB        = $d.FehltInB
+        FehltInA        = $d.FehltInA
+        Abweichend      = $d.Abweichend
         Unterschied     = $d.Hinweis
         PfadA           = $d.PfadA
         PfadB           = $d.PfadB
@@ -488,6 +579,9 @@ foreach ($f in $fileRows) {
         GeaendertB      = $f.GeaendertB
         DateienA        = ''
         DateienB        = ''
+        FehltInB        = ''
+        FehltInA        = ''
+        Abweichend      = ''
         Unterschied     = $f.Unterschied
         PfadA           = $f.PfadA
         PfadB           = $f.PfadB
@@ -647,6 +741,12 @@ function New-SizeCell {
     return '<td class="num" data-sort="' + $Bytes + '">' + $Text + '</td>'
 }
 
+function New-MarkCell {
+    param([int]$Count)
+    if ($Count -le 0) { return '<td class="num" data-sort="0">&ndash;</td>' }
+    return '<td class="num missing" data-sort="' + $Count + '">' + $Count + '</td>'
+}
+
 function New-DiffCell {
     param($Bytes)
     if ($null -eq $Bytes) { return '<td class="num" data-sort="0">&ndash;</td>' }
@@ -694,7 +794,7 @@ $null = $sb.AppendLine('<h2>1. Verzeichnisse</h2>')
 $null = $sb.AppendLine('<div class="panel">')
 $null = $sb.AppendLine((New-Toolbar -OnlyA $dOnlyA -OnlyB $dOnlyB -Diff $dDiff -Same $dSame))
 $null = $sb.AppendLine('<div class="scroll"><table><thead><tr>')
-$null = $sb.AppendLine('<th>Status</th><th>Verzeichnis (relativ)</th><th>Gr&ouml;&szlig;e A</th><th>Gr&ouml;&szlig;e B</th><th>Differenz</th><th>Dateien A</th><th>Dateien B</th><th>Hinweis</th>')
+$null = $sb.AppendLine('<th>Status</th><th>Verzeichnis (relativ)</th><th>Gr&ouml;&szlig;e A</th><th>Gr&ouml;&szlig;e B</th><th>Differenz</th><th>Dateien A</th><th>Dateien B</th><th title="Dateien darunter, die in B fehlen">Fehlt in B</th><th title="Dateien darunter, die in A fehlen">Fehlt in A</th><th title="Dateien darunter, die auf beiden Seiten liegen, aber abweichen">Abweichend</th>')
 $null = $sb.AppendLine('</tr></thead><tbody>')
 
 foreach ($d in $dirRows) {
@@ -716,7 +816,9 @@ foreach ($d in $dirRows) {
         (New-SizeCell -Bytes $d.GroesseB_Bytes -Text $d.GroesseB) +
         (New-DiffCell -Bytes $d.Differenz_Bytes) +
         $cA + $cB +
-        '<td>' + (ConvertTo-HtmlText $d.Hinweis) + '</td></tr>')
+        (New-MarkCell -Count $d.FehltInB) +
+        (New-MarkCell -Count $d.FehltInA) +
+        (New-MarkCell -Count $d.Abweichend) + '</tr>')
 }
 $null = $sb.AppendLine('</tbody></table></div></div>')
 
@@ -730,7 +832,7 @@ $null = $sb.AppendLine('</tr></thead><tbody>')
 
 foreach ($f in $fileRows) {
     $k = Get-StatusKey $f.Status
-    $search = ($f.RelativerPfad + ' ' + $f.Dateiname).ToLower()
+    $search = ($f.RelativerPfad + ' ' + $f.Dateiname + ' ' + $f.DateinameB).ToLower()
 
     $dA = '<td class="num missing">fehlt</td>'
     if ($f.GeaendertA -ne '') { $dA = '<td class="num">' + $f.GeaendertA + '</td>' }
@@ -740,9 +842,17 @@ foreach ($f in $fileRows) {
     $verz = $f.Verzeichnis
     if ($verz -eq '.') { $verz = '(Wurzel)' }
 
+    # Bei abweichender Gross-/Kleinschreibung beide Schreibweisen zeigen
+    $nameZelle = ConvertTo-HtmlText $f.Dateiname
+    if ($f.DateinameA -ne '' -and $f.DateinameB -ne '' -and
+        -not [string]::Equals($f.DateinameA, $f.DateinameB, [StringComparison]::Ordinal)) {
+        $nameZelle = 'A: ' + (ConvertTo-HtmlText $f.DateinameA) +
+                     '<br>B: ' + (ConvertTo-HtmlText $f.DateinameB)
+    }
+
     $null = $sb.AppendLine('<tr data-status="' + $k + '" data-search="' + (ConvertTo-HtmlText $search) + '">' +
         '<td data-sort="' + $f.Status + '"><span class="badge b-' + $k + '">' + (ConvertTo-HtmlText $f.Status) + '</span></td>' +
-        '<td class="path">' + (ConvertTo-HtmlText $f.Dateiname) + '</td>' +
+        '<td class="path">' + $nameZelle + '</td>' +
         '<td class="path">' + (ConvertTo-HtmlText $verz) + '</td>' +
         (New-SizeCell -Bytes $f.GroesseA_Bytes -Text $f.GroesseA) +
         (New-SizeCell -Bytes $f.GroesseB_Bytes -Text $f.GroesseB) +
