@@ -49,7 +49,7 @@
     .\Compare-FolderTrees.ps1 "D:\Projekte" "\\nas\projekte" -ExcludeFolder '.git','node_modules' -CompareHash
 
 .NOTES
-    Version 1.2
+    Version 1.2.1
 
     Der Status eines Verzeichnisses wird aus den enthaltenen Dateien abgeleitet,
     nicht aus Gesamtgroesse und Dateianzahl: zwei Ordner koennen zufaellig gleich
@@ -664,7 +664,7 @@ code{font-family:Consolas,"Courier New",monospace;word-break:break-all}
 .card .v{font-size:22px;font-weight:600;margin-top:2px}
 .card.onlyA .v{color:#2563eb}.card.onlyB .v{color:#7c3aed}
 .card.diff .v{color:#d97706}.card.same .v{color:#059669}
-.panel{background:#fff;border:1px solid #e1e5ea;border-radius:8px;overflow:hidden}
+.panel,.notes{background:#fff;border:1px solid #e1e5ea;border-radius:8px;overflow:hidden}
 .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;
      border-bottom:1px solid #e1e5ea;background:#fafbfc}
 .toolbar input{flex:1 1 220px;padding:6px 10px;border:1px solid #cbd2d9;border-radius:6px;font-size:13px}
@@ -702,6 +702,10 @@ footer{margin-top:28px;color:#6b7280;font-size:12.5px}
 $js = @'
 function initPanel(panel){
   var input = panel.querySelector('.q');
+  // Ohne Suchfeld und Filter ist nichts zu verdrahten. Ohne diese Pruefung
+  // bricht die Schleife beim ersten solchen Element ab - alle danach folgenden
+  // Tabellen haetten dann keine funktionierenden Filterbuttons mehr.
+  if (!input || !panel.querySelector('.filters button.active')) { return; }
   var buttons = panel.querySelectorAll('.filters button');
   for (var i = 0; i < buttons.length; i++){
     buttons[i].addEventListener('click', function(){
@@ -915,7 +919,8 @@ $null = $sb.AppendLine('</tbody></table></div></div>')
 $allErrors = @($idxA.Errors) + @($idxB.Errors)
 if ($allErrors.Count -gt 0) {
     $null = $sb.AppendLine('<h2>Hinweise / Lesefehler (' + $allErrors.Count + ')</h2>')
-    $null = $sb.AppendLine('<div class="panel" style="padding:12px">')
+    # Eigene Klasse: der Hinweis-Kasten ist keine filterbare Tabelle
+    $null = $sb.AppendLine('<div class="notes" style="padding:12px">')
     foreach ($e in ($allErrors | Select-Object -First 100)) {
         $null = $sb.AppendLine('<div class="path">' + (ConvertTo-HtmlText $e) + '</div>')
     }

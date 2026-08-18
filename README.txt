@@ -4,7 +4,7 @@
 
               Zwei Ordnerstrukturen vergleichen - HTML-Bericht und CSV
 
-                                  Version 1.2
+                                Version 1.2.1
 
 ===============================================================================
 
@@ -281,6 +281,15 @@
 -------------------------------------------------------------------------------
   9   AENDERUNGEN
 -------------------------------------------------------------------------------
+
+  VERSION 1.2.1
+
+      KORREKTUR - Das Initialisierungsskript des HTML-Berichts lief auch ueber
+      den Hinweis-Kasten, der weder Suchfeld noch Filter besitzt, und brach
+      dort mit einem Fehler ab. Weil der Kasten als letztes Element steht,
+      waren die Tabellen zu dem Zeitpunkt bereits verdrahtet - die Filter
+      funktionierten also. Stuende der Kasten weiter oben, waeren saemtliche
+      Filterbuttons wirkungslos gewesen.
 
   VERSION 1.2
 

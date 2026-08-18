@@ -185,6 +185,14 @@ if ($r.AnzahlDateien -gt 0) { Start-Process $r.HtmlReport }
 
 ## Änderungen
 
+### Version 1.2.1
+
+* **Korrektur:** Das Initialisierungsskript des HTML-Berichts lief auch über den
+  Hinweis-Kasten, der weder Suchfeld noch Filter besitzt, und brach dort mit
+  einem Fehler ab. Weil der Kasten als letztes Element steht, waren die Tabellen
+  zu dem Zeitpunkt bereits verdrahtet — die Filter funktionierten also. Stünde
+  der Kasten weiter oben, wären sämtliche Filterbuttons wirkungslos gewesen.
+
 ### Version 1.2
 
 * **Korrektur:** Dateinamen mit Umlauten oder Akzenten wurden je nach
