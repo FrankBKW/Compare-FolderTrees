@@ -49,7 +49,7 @@
     .\Compare-FolderTrees.ps1 "D:\Projekte" "\\nas\projekte" -ExcludeFolder '.git','node_modules' -CompareHash
 
 .NOTES
-    Version 1.3
+    Version 1.3.1
 
     Der Status eines Verzeichnisses wird aus den enthaltenen Dateien abgeleitet,
     nicht aus Gesamtgroesse und Dateianzahl: zwei Ordner koennen zufaellig gleich
@@ -680,8 +680,17 @@ th,td{padding:7px 10px;border-bottom:1px solid #eef1f4;text-align:left;vertical-
 th{position:sticky;top:0;background:#f0f3f6;cursor:pointer;user-select:none;white-space:nowrap;
    font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#52606d;z-index:1}
 th:hover{background:#e4e9ee}
+/* Zahlenspalten rechtsbuendig - der Spaltenkopf muss mitziehen, sonst stehen
+   Ueberschrift und Wert an entgegengesetzten Raendern derselben Spalte. */
 td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
-td.path{font-family:Consolas,"Courier New",monospace;font-size:12.5px;word-break:break-all}
+th.num{text-align:right}
+/* Datumsspalten: gleiche Breite, aber linksbuendig wie ihr Kopf */
+td.dt{text-align:left;white-space:nowrap;font-variant-numeric:tabular-nums}
+/* Umbruch nur, wenn es sonst nicht passt - "break-all" zerlegt sonst jeden
+   Dateinamen mitten im Wort. min-width verhindert, dass die Namensspalte von
+   den vielen Zahlenspalten zusammengequetscht wird. */
+td.path{font-family:Consolas,"Courier New",monospace;font-size:12.5px;
+     word-break:normal;overflow-wrap:anywhere;min-width:11rem}
 tbody tr:hover{background:#f7fafc}
 .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;
      font-weight:600;white-space:nowrap}
@@ -880,7 +889,7 @@ $null = $sb.AppendLine('<h2>1. Verzeichnisse</h2>')
 $null = $sb.AppendLine('<div class="panel">')
 $null = $sb.AppendLine((New-Toolbar -OnlyA $dOnlyA -OnlyB $dOnlyB -Diff $dDiff -Same $dSame))
 $null = $sb.AppendLine('<div class="scroll"><table><thead><tr>')
-$null = $sb.AppendLine('<th>Status</th><th>Verzeichnis (relativ)</th><th>Gr&ouml;&szlig;e A</th><th>Gr&ouml;&szlig;e B</th><th>Differenz</th><th>Dateien A</th><th>Dateien B</th><th title="Dateien darunter, die in B fehlen">Fehlt in B</th><th title="Dateien darunter, die in A fehlen">Fehlt in A</th><th title="Dateien darunter, die auf beiden Seiten liegen, aber abweichen">Abweichend</th>')
+$null = $sb.AppendLine('<th>Status</th><th>Verzeichnis (relativ)</th><th class="num">Gr&ouml;&szlig;e A</th><th class="num">Gr&ouml;&szlig;e B</th><th class="num">Differenz</th><th class="num">Dateien A</th><th class="num">Dateien B</th><th class="num" title="Dateien darunter, die in B fehlen">Fehlt in B</th><th class="num" title="Dateien darunter, die in A fehlen">Fehlt in A</th><th class="num" title="Dateien darunter, die auf beiden Seiten liegen, aber abweichen">Abweichend</th>')
 $null = $sb.AppendLine('</tr></thead><tbody>')
 
 foreach ($d in $dirRows) {
@@ -913,17 +922,17 @@ $null = $sb.AppendLine('<h2>2. Dateien</h2>')
 $null = $sb.AppendLine('<div class="panel">')
 $null = $sb.AppendLine((New-Toolbar -OnlyA $fOnlyA -OnlyB $fOnlyB -Diff $fDiff -Same $fSame))
 $null = $sb.AppendLine('<div class="scroll"><table><thead><tr>')
-$null = $sb.AppendLine('<th>Status</th><th>Dateiname</th><th>Verzeichnis (relativ)</th><th>Gr&ouml;&szlig;e A</th><th>Gr&ouml;&szlig;e B</th><th>Ge&auml;ndert A</th><th>Ge&auml;ndert B</th><th>Unterschied</th>')
+$null = $sb.AppendLine('<th>Status</th><th>Dateiname</th><th>Verzeichnis (relativ)</th><th class="num">Gr&ouml;&szlig;e A</th><th class="num">Gr&ouml;&szlig;e B</th><th>Ge&auml;ndert A</th><th>Ge&auml;ndert B</th><th>Unterschied</th>')
 $null = $sb.AppendLine('</tr></thead><tbody>')
 
 foreach ($f in $fileRows) {
     $k = Get-StatusKey $f.Status
     $search = ($f.RelativerPfad + ' ' + $f.Dateiname + ' ' + $f.DateinameB).ToLower()
 
-    $dA = '<td class="num missing">fehlt</td>'
-    if ($f.GeaendertA -ne '') { $dA = '<td class="num">' + $f.GeaendertA + '</td>' }
-    $dB = '<td class="num missing">fehlt</td>'
-    if ($f.GeaendertB -ne '') { $dB = '<td class="num">' + $f.GeaendertB + '</td>' }
+    $dA = '<td class="dt missing">fehlt</td>'
+    if ($f.GeaendertA -ne '') { $dA = '<td class="dt">' + $f.GeaendertA + '</td>' }
+    $dB = '<td class="dt missing">fehlt</td>'
+    if ($f.GeaendertB -ne '') { $dB = '<td class="dt">' + $f.GeaendertB + '</td>' }
 
     $verz = $f.Verzeichnis
     if ($verz -eq '.') { $verz = '(Wurzel)' }

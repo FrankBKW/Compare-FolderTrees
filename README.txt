@@ -4,7 +4,7 @@
 
               Zwei Ordnerstrukturen vergleichen - HTML-Bericht und CSV
 
-                                 Version 1.3
+                                Version 1.3.1
 
 ===============================================================================
 
@@ -281,6 +281,17 @@
 -------------------------------------------------------------------------------
   9   AENDERUNGEN
 -------------------------------------------------------------------------------
+
+  VERSION 1.3.1
+
+      KORREKTUR - Spaltenkoepfe standen nicht ueber ihren Werten. Die
+      Ueberschriften waren linksbuendig, Groessen und Anzahlen darunter
+      rechtsbuendig - Kopf und Wert sassen damit an entgegengesetzten Raendern
+      derselben Spalte. Zahlenspalten sind jetzt durchgehend rechtsbuendig,
+      Datumsspalten durchgehend linksbuendig.
+
+      KORREKTUR - Dateinamen wurden mitten im Wort umbrochen. Die Namensspalte
+      hat jetzt eine Mindestbreite und bricht nur noch im Notfall um.
 
   VERSION 1.3
 

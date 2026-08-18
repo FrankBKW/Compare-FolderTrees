@@ -185,6 +185,15 @@ if ($r.AnzahlDateien -gt 0) { Start-Process $r.HtmlReport }
 
 ## Änderungen
 
+### Version 1.3.1
+
+* **Korrektur:** Spaltenköpfe standen nicht über ihren Werten. Die Überschriften
+  waren linksbündig, Größen und Anzahlen darunter rechtsbündig — Kopf und Wert
+  saßen damit an entgegengesetzten Rändern derselben Spalte. Zahlenspalten sind
+  jetzt durchgehend rechtsbündig, Datumsspalten durchgehend linksbündig.
+* Dateinamen werden nicht mehr mitten im Wort umbrochen; die Namensspalte hat
+  eine Mindestbreite, damit sie von den Zahlenspalten nicht zusammengedrückt wird.
+
 ### Version 1.3
 
 * **Warnung bei unvollständigem Einlesen.** Konnte eine Seite nicht komplett
