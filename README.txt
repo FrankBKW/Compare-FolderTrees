@@ -4,7 +4,7 @@
 
               Zwei Ordnerstrukturen vergleichen - HTML-Bericht und CSV
 
-                                Version 1.2.1
+                                 Version 1.3
 
 ===============================================================================
 
@@ -281,6 +281,18 @@
 -------------------------------------------------------------------------------
   9   AENDERUNGEN
 -------------------------------------------------------------------------------
+
+  VERSION 1.3
+
+      NEU - Warnung bei unvollstaendigem Einlesen. Konnte eine Seite nicht
+      komplett gelesen werden, steht das jetzt als roter Kasten oben im Bericht
+      und in der Konsolenausgabe: welche Seite betroffen ist und dass deren
+      Dateien faelschlich als "nur auf der anderen Seite" erscheinen koennen.
+
+      Das ist die haeufigste Ursache fuer scheinbar falsche Ergebnisse. Pfade
+      ueber 260 Zeichen treffen nur die tiefer verschachtelte Seite - dieselben
+      Dateien sind unter dem kuerzeren Pfad der anderen Seite lesbar und stehen
+      dann dort allein.
 
   VERSION 1.2.1
 

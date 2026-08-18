@@ -49,7 +49,7 @@
     .\Compare-FolderTrees.ps1 "D:\Projekte" "\\nas\projekte" -ExcludeFolder '.git','node_modules' -CompareHash
 
 .NOTES
-    Version 1.2.1
+    Version 1.3
 
     Der Status eines Verzeichnisses wird aus den enthaltenen Dateien abgeleitet,
     nicht aus Gesamtgroesse und Dateianzahl: zwei Ordner koennen zufaellig gleich
@@ -222,7 +222,7 @@ function Get-TreeIndex {
     $scanErr = $null
     $items = Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable scanErr
     if ($scanErr) {
-        foreach ($e in $scanErr) { $errors.Add([string]$e) }
+        foreach ($e in $scanErr) { $errors.Add("[$Label] " + [string]$e) }
     }
 
     # Wurzelverzeichnis als eigener Eintrag
@@ -693,6 +693,11 @@ tr[data-status="onlyA"] td:first-child{border-left:3px solid #2563eb}
 tr[data-status="onlyB"] td:first-child{border-left:3px solid #7c3aed}
 tr[data-status="diff"]  td:first-child{border-left:3px solid #d97706}
 tr[data-status="same"]  td:first-child{border-left:3px solid #10b981}
+.warn{background:#fef2f2;border:1px solid #fca5a5;border-left:5px solid #dc2626;
+     border-radius:8px;padding:14px 16px;margin-bottom:18px}
+.warn h3{margin:0 0 6px;font-size:15px;color:#991b1b}
+.warn p{margin:0 0 6px}
+.warn ul{margin:6px 0 0 18px;padding:0}
 .missing{color:#b91c1c;font-weight:600}
 .neg{color:#b91c1c}.pos{color:#047857}
 footer{margin-top:28px;color:#6b7280;font-size:12.5px}
@@ -834,6 +839,33 @@ $null = $sb.AppendLine('<div class="pathbox"><span class="tag tagB">B</span><cod
     '</code><div class="sub" style="margin:6px 0 0">' + $idxB.Files.Count + ' Dateien &middot; ' + (Format-Size $totalB) + '</div></div>')
 $null = $sb.AppendLine('</div>')
 
+# Warnung, wenn eine Seite unvollstaendig eingelesen wurde. Das ist die haeufigste
+# Ursache fuer scheinbar falsche Ergebnisse: was auf einer Seite nicht gelesen
+# werden konnte, erscheint zwangslaeufig als "nur auf der anderen Seite vorhanden".
+$errListA = @($idxA.Errors | Where-Object { $_ -like '`[A`]*' })
+$errListB = @($idxB.Errors | Where-Object { $_ -like '`[B`]*' })
+
+if ($errListA.Count -gt 0 -or $errListB.Count -gt 0) {
+    $null = $sb.AppendLine('<div class="warn">')
+    $null = $sb.AppendLine('<h3>Achtung: eine Seite konnte nicht vollst&auml;ndig gelesen werden</h3>')
+    $null = $sb.AppendLine('<p>Dateien, die beim Einlesen &uuml;bersprungen wurden, fehlen im Vergleich. ' +
+        'Sie erscheinen dann f&auml;lschlich als <strong>nur auf der jeweils anderen Seite vorhanden</strong>, ' +
+        'obwohl es sie auf beiden gibt.</p><ul>')
+    if ($errListA.Count -gt 0) {
+        $null = $sb.AppendLine('<li>Seite <strong>A</strong>: ' + $errListA.Count +
+            ' &Uuml;bersprungene &mdash; betroffene Dateien k&ouml;nnen f&auml;lschlich als &bdquo;Nur in B&ldquo; erscheinen</li>')
+    }
+    if ($errListB.Count -gt 0) {
+        $null = $sb.AppendLine('<li>Seite <strong>B</strong>: ' + $errListB.Count +
+            ' &Uuml;bersprungene &mdash; betroffene Dateien k&ouml;nnen f&auml;lschlich als &bdquo;Nur in A&ldquo; erscheinen</li>')
+    }
+    $null = $sb.AppendLine('</ul><p style="margin-top:8px">H&auml;ufigste Gr&uuml;nde: Pfade &uuml;ber 260 Zeichen ' +
+        '(betrifft nur die tiefer verschachtelte Seite), fehlende Zugriffsrechte, oder verkn&uuml;pfte Ordner ' +
+        '(Junctions, Symlinks), denen PowerShell 5.1 nicht folgt. Die Einzelheiten stehen unten unter ' +
+        '&bdquo;Hinweise&ldquo;.</p>')
+    $null = $sb.AppendLine('</div>')
+}
+
 $null = $sb.AppendLine('<div class="cards">')
 $null = $sb.AppendLine('<div class="card onlyA"><div class="k">Dateien nur in A</div><div class="v">' + $fOnlyA + '</div></div>')
 $null = $sb.AppendLine('<div class="card onlyB"><div class="k">Dateien nur in B</div><div class="v">' + $fOnlyB + '</div></div>')
@@ -946,6 +978,18 @@ Write-Host ''
 Write-Host '--- Ergebnis ---------------------------------------------------' -ForegroundColor White
 Write-Host ('Verzeichnisse : {0} gesamt | nur A: {1} | nur B: {2} | abweichend: {3} | identisch: {4}' -f $dirRows.Count, $dOnlyA, $dOnlyB, $dDiff, $dSame)
 Write-Host ('Dateien       : {0} gesamt | nur A: {1} | nur B: {2} | abweichend: {3} | identisch: {4}' -f $fileRows.Count, $fOnlyA, $fOnlyB, $fDiff, $fSame)
+
+if ($errListA.Count -gt 0 -or $errListB.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'ACHTUNG: eine Seite konnte nicht vollstaendig gelesen werden.' -ForegroundColor Red
+    if ($errListA.Count -gt 0) {
+        Write-Host ("  Seite A: {0} uebersprungen -> koennen faelschlich als 'Nur in B' erscheinen" -f $errListA.Count) -ForegroundColor Yellow
+    }
+    if ($errListB.Count -gt 0) {
+        Write-Host ("  Seite B: {0} uebersprungen -> koennen faelschlich als 'Nur in A' erscheinen" -f $errListB.Count) -ForegroundColor Yellow
+    }
+    Write-Host '  Einzelheiten stehen im HTML-Bericht unter "Hinweise".' -ForegroundColor DarkGray
+}
 Write-Host ''
 Write-Host ('HTML : {0}' -f $htmlPath) -ForegroundColor Green
 Write-Host ('CSV  : {0}' -f $csvAll)   -ForegroundColor Green

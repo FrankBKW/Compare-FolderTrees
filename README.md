@@ -185,6 +185,16 @@ if ($r.AnzahlDateien -gt 0) { Start-Process $r.HtmlReport }
 
 ## Änderungen
 
+### Version 1.3
+
+* **Warnung bei unvollständigem Einlesen.** Konnte eine Seite nicht komplett
+  gelesen werden, steht das jetzt als rot abgesetzter Kasten oben im Bericht und
+  in der Konsolenausgabe — mit der Angabe, welche Seite betroffen ist und dass
+  deren Dateien fälschlich als „nur auf der anderen Seite" erscheinen können.
+  Bisher war das nur unten unter „Hinweise" zu finden und damit leicht zu
+  übersehen. Das ist die häufigste Ursache für scheinbar falsche Ergebnisse:
+  Pfade über 260 Zeichen treffen nur die tiefer verschachtelte Seite.
+
 ### Version 1.2.1
 
 * **Korrektur:** Das Initialisierungsskript des HTML-Berichts lief auch über den
