@@ -1,10 +1,10 @@
-===============================================================================
+﻿===============================================================================
 
                         C O M P A R E - F O L D E R T R E E S
 
               Zwei Ordnerstrukturen vergleichen - HTML-Bericht und CSV
 
-                                  Version 1.1
+                                  Version 1.2
 
 ===============================================================================
 
@@ -92,7 +92,30 @@
       Groesse ......... unterschiedliche Dateigroesse
       Aenderungsdatum . Zeitstempel weichen ueber die Toleranz hinaus ab
       Schreibweise .... gleicher Name, andere Gross-/Kleinschreibung
+      Namenskodierung . gleicher Name, andere Unicode-Kodierung der Umlaute
       Inhalt (Hash) ... nur mit -CompareHash: gleiche Groesse, anderer Inhalt
+
+
+  UMLAUTE: ZWEI SCHREIBWEISEN, DIESELBE DATEI
+  ...........................................
+
+  Ein "ue" kann im Dateisystem auf zwei Arten gespeichert sein:
+
+      Mueller.pdf   77 252 108 ...      ein Zeichen (U+00FC)
+                                        -> so schreibt Windows
+
+      Mueller.pdf   77 117 776 108 ...  Grundzeichen + Trema (U+0075 U+0308)
+                                        -> so schreiben macOS und viele NAS
+
+  Beide sehen auf dem Bildschirm voellig identisch aus, sind als Zeichenkette
+  aber verschieden. Ohne Gegenmassnahme taucht dieselbe Datei zweimal im
+  Bericht auf - einmal als "Nur in A" und einmal als "Nur in B".
+
+  Das Script normalisiert Namen deshalb vor dem Vergleich und weist eine
+  abweichende Kodierung als Unterschied "Namenskodierung" aus.
+
+  Relevant wird das, sobald eine der beiden Seiten von einem NAS, einem Mac
+  oder aus einem Archiv stammt.
 
 
   VERZEICHNISSE WERDEN UEBER IHREN INHALT BEWERTET
@@ -226,6 +249,12 @@
       handhabt. Weicht die Schreibweise ab (DATEI.TXT gegen datei.txt), gilt
       das als Unterschied "Schreibweise"; der Bericht zeigt beide Varianten.
 
+  VERKNUEPFTE ORDNER (JUNCTIONS, SYMLINKS)
+      PowerShell 5.1 folgt Verknuepfungen beim rekursiven Einlesen NICHT. Ihr
+      Inhalt fehlt damit im Vergleich, obwohl der Explorer ihn anzeigt.
+      Betroffene Ordner werden unter "Hinweise" im Bericht aufgefuehrt - dort
+      nachsehen, wenn ein ganzer Teilbaum unerwartet fehlt.
+
   PFADLAENGE
       Windows PowerShell 5.1 kann Pfade ueber 260 Zeichen nicht lesen. Solche
       Faelle verschwinden nicht stillschweigend, sondern erscheinen als
@@ -252,6 +281,18 @@
 -------------------------------------------------------------------------------
   9   AENDERUNGEN
 -------------------------------------------------------------------------------
+
+  VERSION 1.2
+
+      KORREKTUR - Dateinamen mit Umlauten oder Akzenten wurden je nach
+      Unicode-Kodierung als zwei verschiedene Dateien behandelt. Dieselbe Datei
+      erschien dadurch doppelt im Bericht: einmal als "Nur in A" und einmal als
+      "Nur in B". Namen werden jetzt vor dem Vergleich normalisiert, eine
+      abweichende Kodierung erscheint als Unterschied "Namenskodierung".
+
+      NEU - Verknuepfte Ordner (Junctions, Symlinks) werden unter "Hinweise"
+      im Bericht aufgefuehrt. PowerShell 5.1 folgt ihnen nicht, ihr Inhalt
+      fehlte bisher stillschweigend im Vergleich.
 
   VERSION 1.1
 

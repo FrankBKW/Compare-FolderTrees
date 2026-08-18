@@ -31,7 +31,25 @@ Jedes Objekt bekommt einen von vier Status:
 | `Identisch`       | Größe und Änderungsdatum (optional Hash) stimmen überein |
 
 Bei Dateien wird zusätzlich ausgewiesen, *was* abweicht: Größe, Änderungsdatum,
-Schreibweise oder — mit `-CompareHash` — der Inhalt.
+Schreibweise, Namenskodierung oder — mit `-CompareHash` — der Inhalt.
+
+### Umlaute: zwei Schreibweisen, dieselbe Datei
+
+Ein „ü" kann im Dateisystem auf zwei Arten gespeichert sein:
+
+```
+Müller.pdf   →  77 252 108 ...    ü als ein Zeichen (U+00FC)          Windows
+Müller.pdf   →  77 117 776 108 …  ü als u + Trema (U+0075 U+0308)     macOS, viele NAS
+```
+
+Beide sehen identisch aus, sind als Zeichenkette aber verschieden. Ohne
+Gegenmaßnahme taucht dieselbe Datei zweimal im Bericht auf — einmal als
+`Nur in A` und einmal als `Nur in B`. Das Script normalisiert Namen deshalb vor
+dem Vergleich (Unicode Form C) und weist eine abweichende Kodierung als
+Unterschied `Namenskodierung` aus.
+
+Praktisch relevant wird das, sobald eine der beiden Seiten von einem NAS, einem
+Mac oder aus einem Archiv stammt.
 
 ### Verzeichnisse werden über ihren Inhalt bewertet
 
@@ -145,6 +163,10 @@ if ($r.AnzahlDateien -gt 0) { Start-Process $r.HtmlReport }
   Windows das ebenso handhabt. Weicht die Schreibweise ab (`DATEI.TXT` gegen
   `datei.txt`), gilt das als Unterschied `Schreibweise`; der Bericht zeigt dann
   beide Varianten nebeneinander.
+* **Verknüpfte Ordner:** Junctions und Symlinks verfolgt PowerShell 5.1 beim
+  rekursiven Einlesen nicht. Ihr Inhalt fehlt damit im Vergleich, obwohl der
+  Explorer ihn anzeigt. Betroffene Ordner stehen unter „Hinweise" im Bericht —
+  dort nachsehen, wenn ein ganzer Teilbaum unerwartet fehlt.
 * **Pfadlänge:** Windows PowerShell 5.1 kann Pfade über 260 Zeichen nicht lesen.
   Solche Fälle werden nicht stillschweigend übergangen, sondern als Lesefehler
   unten im HTML-Bericht aufgeführt. Unter PowerShell 7+ oder mit aktiviertem
@@ -162,6 +184,18 @@ if ($r.AnzahlDateien -gt 0) { Start-Process $r.HtmlReport }
   Zum Filtern von Dateien ist `-Filter` zuständig.
 
 ## Änderungen
+
+### Version 1.2
+
+* **Korrektur:** Dateinamen mit Umlauten oder Akzenten wurden je nach
+  Unicode-Kodierung als zwei verschiedene Dateien behandelt. Dieselbe Datei
+  erschien dadurch doppelt im Bericht — einmal als `Nur in A`, einmal als
+  `Nur in B`. Namen werden jetzt vor dem Vergleich normalisiert; eine
+  abweichende Kodierung erscheint als Unterschied `Namenskodierung`.
+* Ordner-Verknüpfungen (Junctions, Symlinks) werden von PowerShell 5.1 nicht
+  verfolgt. Ihr Inhalt fehlte bisher stillschweigend im Vergleich, obwohl er im
+  Explorer sichtbar ist. Solche Ordner werden jetzt unter „Hinweise" im Bericht
+  aufgeführt.
 
 ### Version 1.1
 

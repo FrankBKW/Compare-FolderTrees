@@ -49,11 +49,16 @@
     .\Compare-FolderTrees.ps1 "D:\Projekte" "\\nas\projekte" -ExcludeFolder '.git','node_modules' -CompareHash
 
 .NOTES
-    Version 1.1
+    Version 1.2
 
     Der Status eines Verzeichnisses wird aus den enthaltenen Dateien abgeleitet,
     nicht aus Gesamtgroesse und Dateianzahl: zwei Ordner koennen zufaellig gleich
     gross sein und trotzdem verschiedene Dateien enthalten.
+
+    Dateinamen werden vor dem Vergleich unicode-normalisiert (Form C). Umlaute
+    lassen sich auf zwei Arten speichern - als ein Zeichen oder als Grundzeichen
+    plus kombinierendem Trema. Ohne Normalisierung erscheint dieselbe Datei
+    zweimal im Bericht: einmal als "Nur in A" und einmal als "Nur in B".
 #>
 
 [CmdletBinding()]
@@ -122,6 +127,21 @@ function Format-Date {
     return ([datetime]$Value).ToString('yyyy-MM-dd HH:mm:ss')
 }
 
+function ConvertTo-NormKey {
+    # Unicode-Normalisierung auf Form C.
+    #
+    # Umlaute koennen auf zwei Arten gespeichert sein: "ue" als ein Zeichen
+    # (U+00FC, so schreibt Windows) oder als "u" plus kombinierendes Trema
+    # (U+0075 U+0308, so schreiben macOS und viele NAS-Systeme). Beide sehen
+    # identisch aus, sind als Zeichenkette aber verschieden. Ohne diese
+    # Normalisierung erscheint dieselbe Datei zweimal im Bericht - einmal als
+    # "Nur in A" und einmal als "Nur in B".
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    try   { return $Text.Normalize([System.Text.NormalizationForm]::FormC) }
+    catch { return $Text }   # ungueltige Zeichenfolgen unveraendert lassen
+}
+
 function Get-ParentRel {
     param([string]$Rel)
     $i = $Rel.LastIndexOf('\')
@@ -134,6 +154,25 @@ function Get-LeafRel {
     $i = $Rel.LastIndexOf('\')
     if ($i -lt 0) { return $Rel }
     return $Rel.Substring($i + 1)
+}
+
+function Get-NameDifference {
+    # Liefert die Gruende, warum zwei Namen abweichen, die derselben Datei bzw.
+    # demselben Ordner zugeordnet wurden. Leer, wenn sie exakt gleich sind.
+    param([string]$NameA, [string]$NameB)
+
+    $gruende = New-Object 'System.Collections.Generic.List[string]'
+    if ([string]::Equals($NameA, $NameB, [StringComparison]::Ordinal)) { return $gruende }
+
+    $nA = ConvertTo-NormKey $NameA
+    $nB = ConvertTo-NormKey $NameB
+
+    # Nach der Normalisierung noch unterschiedlich -> Gross-/Kleinschreibung
+    if (-not [string]::Equals($nA, $nB, [StringComparison]::Ordinal)) { $gruende.Add('Schreibweise') }
+    # Roh unterschiedlich, obwohl normalisiert gleich -> abweichende Kodierung
+    if (-not [string]::Equals($NameA, $NameB, [StringComparison]::OrdinalIgnoreCase)) { $gruende.Add('Namenskodierung') }
+
+    return $gruende
 }
 
 function Get-StatusKey {
@@ -190,6 +229,7 @@ function Get-TreeIndex {
     $rootItem = Get-Item -LiteralPath $rootFull -Force
     $dirs['.'] = [pscustomobject]@{
         Rel       = '.'
+        Name      = '.'
         Full      = $rootFull
         Size      = [long]0
         FileCount = 0
@@ -197,7 +237,9 @@ function Get-TreeIndex {
     }
 
     foreach ($item in $items) {
-        $rel = $item.FullName.Substring($prefixLen).TrimStart('\')
+        # Der relative Pfad dient als Schluessel und wird dafuer normalisiert.
+        # Die tatsaechliche Schreibweise bleibt in Name/Full erhalten.
+        $rel = ConvertTo-NormKey ($item.FullName.Substring($prefixLen).TrimStart('\'))
         if ([string]::IsNullOrEmpty($rel)) { continue }
 
         if ($ExcludeFolder.Count -gt 0) {
@@ -217,9 +259,16 @@ function Get-TreeIndex {
         }
 
         if ($item.PSIsContainer) {
+            # Junctions und Ordner-Symlinks werden von Get-ChildItem -Recurse nicht
+            # verfolgt. Der Inhalt fehlt dadurch im Vergleich, obwohl er im Explorer
+            # sichtbar ist - deshalb ausdruecklich vermerken statt still uebergehen.
+            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                $errors.Add("[$Label] Verknuepfter Ordner wird nicht verfolgt, Inhalt fehlt im Vergleich: " + $item.FullName)
+            }
             if (-not $dirs.ContainsKey($rel)) {
                 $dirs[$rel] = [pscustomobject]@{
                     Rel       = $rel
+                    Name      = $item.Name
                     Full      = $item.FullName
                     Size      = [long]0
                     FileCount = 0
@@ -248,6 +297,7 @@ function Get-TreeIndex {
             if (-not $dirs.ContainsKey($parent)) {
                 $dirs[$parent] = [pscustomobject]@{
                     Rel       = $parent
+                    Name      = (Get-LeafRel $parent)
                     Full      = (Join-Path $rootFull $parent)
                     Size      = [long]0
                     FileCount = 0
@@ -332,11 +382,11 @@ foreach ($key in ($fileKeys | Sort-Object)) {
         $deltaSec = [math]::Abs(($b.LastWrite - $a.LastWrite).TotalSeconds)
         if ($deltaSec -gt $TimeToleranceSeconds) { $r.Add('Aenderungsdatum') }
 
-        # Gleicher Name, aber andere Gross-/Kleinschreibung. Windows behandelt das
-        # als dieselbe Datei - fuer einen Abgleich ist es trotzdem ein Unterschied.
+        # Namen weichen ab, obwohl sie auf denselben Schluessel fuehren: entweder
+        # in der Gross-/Kleinschreibung oder in der Unicode-Kodierung der Umlaute.
         # Verglichen wird nur der Dateiname, damit ein abweichend geschriebener
         # Ordnername nicht jede Datei darunter als abweichend markiert.
-        if (-not [string]::Equals($a.Name, $b.Name, [StringComparison]::Ordinal)) { $r.Add('Schreibweise') }
+        foreach ($grund in (Get-NameDifference -NameA $a.Name -NameB $b.Name)) { $r.Add($grund) }
 
         if ($CompareHash -and $a.Size -eq $b.Size) {
             $hashA = Get-FileHashSafe -Path $a.Full -Algorithm $HashAlgorithm
@@ -463,10 +513,10 @@ foreach ($key in ($dirKeys | Sort-Object)) {
             $r.Add("$fehltInA $verb in A")
         }
         if ($abweichend -gt 0) { $r.Add("$abweichend abweichend") }
-        # Schreibweise des Ordnernamens selbst (nur die letzte Ebene, damit ein
-        # abweichender Elternordner nicht den ganzen Teilbaum markiert)
-        if ($key -ne '.' -and -not [string]::Equals((Get-LeafRel $a.Rel), (Get-LeafRel $b.Rel), [StringComparison]::Ordinal)) {
-            $r.Add('Schreibweise')
+        # Name des Ordners selbst (nur die letzte Ebene, damit ein abweichend
+        # geschriebener Elternordner nicht den ganzen Teilbaum markiert)
+        if ($key -ne '.') {
+            foreach ($grund in (Get-NameDifference -NameA $a.Name -NameB $b.Name)) { $r.Add($grund) }
         }
         if ($r.Count -gt 0) { $status = 'Unterschiedlich'; $hinweis = ($r -join ', ') }
     }
