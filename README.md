@@ -135,6 +135,71 @@ verlieren.
 | `-CsvDelimiter`         | `;`                         | auf `,` setzen für englischsprachiges Excel      |
 | `-OpenReport`           | aus                         | HTML-Bericht am Ende öffnen                      |
 
+### Parameter zum Kopieren
+
+| Parameter          | Standard        | Zweck                                                     |
+|--------------------|-----------------|-----------------------------------------------------------|
+| `-Kopieren`        | *aus*           | `AnachB`, `BnachA` oder `Beide` — ohne diesen Parameter wird nichts geschrieben |
+| `-KopiereWas`      | `Fehlende`      | `Fehlende`, `Unterschiedliche` oder `Alles`               |
+| `-BeiKonflikt`     | `Ueberspringen` | bei `Beide` und abweichenden Dateien: `Ueberspringen` oder `Neuere` |
+| `-Ausfuehren`      | aus             | wirklich kopieren — ohne diesen Schalter nur Simulation   |
+| `-Sicherung`       | aus             | überschriebene Dateien vorher wegsichern                   |
+| `-TrotzLesefehler` | aus             | kopieren, obwohl die Zielseite unvollständig gelesen wurde |
+
+## Kopieren
+
+Fehlende oder abweichende Dateien lassen sich in den jeweils anderen Ordner
+übertragen. Der Vergleich bleibt dabei unverändert — das Kopieren setzt nur auf
+dessen Ergebnis auf.
+
+```powershell
+# 1. Ansehen, was passieren würde. Schreibt nichts.
+.\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Kopieren AnachB
+
+# 2. Wenn der Plan stimmt: ausführen.
+.\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Kopieren AnachB -Ausfuehren
+```
+
+### Was passiert wann
+
+`-Kopieren AnachB` überträgt von A nach B, `BnachA` umgekehrt. `Beide` füllt
+fehlende Dateien in beide Richtungen auf.
+
+`-KopiereWas Fehlende` (Standard) rührt vorhandene Dateien nicht an. Erst
+`Unterschiedliche` oder `Alles` überschreibt auch bestehende Dateien.
+
+Bei `-Kopieren Beide` zusammen mit abweichenden Dateien ist nicht von selbst
+klar, welche Seite gewinnt. Solche Fälle werden deshalb standardmäßig
+übersprungen und als Konflikt aufgeführt. Mit `-BeiKonflikt Neuere` entscheidet
+das Änderungsdatum; sind beide Seiten gleich alt, aber inhaltlich verschieden,
+bleibt die Datei unangetastet, weil keine Seite erkennbar aktueller ist.
+
+### Schutzmaßnahmen
+
+Kopieren verändert echte Datenbestände, deshalb mehrere Sicherungen:
+
+* **Simulation ist der Standard.** Ohne `-Ausfuehren` entsteht nur ein Plan.
+* **Es wird nie gelöscht.** Dateien, die auf der Zielseite zu viel sind, bleiben
+  liegen — das Script ist kein Spiegel-Abgleich.
+* **Zielprüfung unmittelbar vor dem Schreiben.** Liegt dort wider Erwarten schon
+  eine Datei, obwohl sie als fehlend eingestuft war, wird sie nicht
+  überschrieben, sondern der Fall im Bericht ausgewiesen.
+* **Abbruch bei unvollständig gelesener Zielseite.** Konnte das Ziel nicht ganz
+  eingelesen werden, ist „fehlt im Ziel" nicht verlässlich. Das Script kopiert
+  dann nichts, bis die Ursache behoben ist oder `-TrotzLesefehler` gesetzt wird.
+* **`-Sicherung`** legt überschriebene Dateien vorher unter
+  `<OutputFolder>\Sicherung_<Zeitstempel>\` ab, mit erhaltener Ordnerstruktur.
+
+Zeitstempel werden beim Kopieren übernommen. Ein zweiter Lauf findet die Dateien
+deshalb als identisch vor und kopiert nichts erneut.
+
+### Ergebnis
+
+Der HTML-Bericht bekommt einen Abschnitt **3. Kopieren** mit allen Vorgängen,
+getrennt nach neu angelegt, überschrieben, übersprungen und fehlgeschlagen.
+Zusätzlich entsteht `Kopieren_<Zeitstempel>.csv` mit Quelle, Ziel, Aktion und
+Ergebnis je Datei.
+
 ## Beispiele
 
 Nur PDFs vergleichen und den Bericht direkt öffnen:
@@ -184,6 +249,19 @@ if ($r.AnzahlDateien -gt 0) { Start-Process $r.HtmlReport }
   Zum Filtern von Dateien ist `-Filter` zuständig.
 
 ## Änderungen
+
+### Version 1.4
+
+* **Neu: Kopieren.** Fehlende und abweichende Dateien lassen sich wahlweise in
+  den anderen Ordner übertragen — `-Kopieren AnachB|BnachA|Beide`, wahlweise
+  eingegrenzt mit `-KopiereWas`. Ohne `-Ausfuehren` wird nur simuliert, gelöscht
+  wird nie, und vor jedem Schreibvorgang prüft das Script das Ziel noch einmal.
+  Mit `-Sicherung` landen überschriebene Dateien vorher in einem Sicherungsordner.
+  Neuer Abschnitt im HTML-Bericht und eine eigene `Kopieren_*.csv`.
+* **Korrektur:** `Get-Help` zeigte nur die nackte Syntaxzeile statt der
+  Dokumentation. Ursache war die `#Requires`-Zeile oberhalb des Hilfeblocks —
+  damit erkennt Windows PowerShell 5.1 die kommentarbasierte Hilfe nicht. Sie
+  steht jetzt darunter.
 
 ### Version 1.3.1
 

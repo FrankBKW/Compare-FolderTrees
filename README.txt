@@ -4,7 +4,7 @@
 
               Zwei Ordnerstrukturen vergleichen - HTML-Bericht und CSV
 
-                                Version 1.3.1
+                                 Version 1.4
 
 ===============================================================================
 
@@ -18,9 +18,10 @@
     4 .... Wie verglichen wird
     5 .... Die Ausgabe
     6 .... Alle Parameter
-    7 .... Beispiele
-    8 .... Was man wissen sollte
-    9 .... Aenderungen
+    7 .... Kopieren
+    8 .... Beispiele
+    9 .... Was man wissen sollte
+   10 .... Aenderungen
 
 
 -------------------------------------------------------------------------------
@@ -214,8 +215,105 @@
   -OpenReport                   HTML-Bericht am Ende automatisch oeffnen.
 
 
+  ZUM KOPIEREN (schreibt in die Ordner - siehe Abschnitt 7)
+  .........................................................
+
+  -Kopieren <Richtung>          AnachB, BnachA oder Beide.
+                                Ohne diesen Parameter wird nichts geschrieben.
+
+  -KopiereWas <Auswahl>         Fehlende (Standard), Unterschiedliche, Alles.
+
+  -BeiKonflikt <Regel>          Nur bei "Beide" und abweichenden Dateien:
+                                Ueberspringen (Standard) oder Neuere.
+
+  -Ausfuehren                   Wirklich kopieren. Ohne diesen Schalter wird
+                                nur simuliert.
+
+  -Sicherung                    Ueberschriebene Dateien vorher wegsichern.
+
+  -TrotzLesefehler              Auch kopieren, wenn die Zielseite nicht
+                                vollstaendig gelesen werden konnte.
+
+
 -------------------------------------------------------------------------------
-  7   BEISPIELE
+  7   KOPIEREN
+-------------------------------------------------------------------------------
+
+  Fehlende oder abweichende Dateien lassen sich in den jeweils anderen Ordner
+  uebertragen. Der Vergleich bleibt davon unberuehrt - das Kopieren setzt nur
+  auf dessen Ergebnis auf.
+
+  Immer in zwei Schritten arbeiten:
+
+      1) Ansehen, was passieren wuerde - schreibt nichts:
+
+         .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Kopieren AnachB
+
+      2) Wenn der Plan stimmt, ausfuehren:
+
+         .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Kopieren AnachB -Ausfuehren
+
+
+  WAS PASSIERT WANN
+  .................
+
+  -Kopieren AnachB    uebertraegt von A nach B
+  -Kopieren BnachA    uebertraegt von B nach A
+  -Kopieren Beide     fuellt fehlende Dateien in beide Richtungen auf
+
+  -KopiereWas Fehlende (Standard) ruehrt vorhandene Dateien nicht an. Erst
+  Unterschiedliche oder Alles ueberschreibt auch bestehende Dateien.
+
+  Bei "Beide" zusammen mit abweichenden Dateien ist nicht von selbst klar,
+  welche Seite gewinnt. Solche Faelle werden deshalb standardmaessig
+  uebersprungen und als Konflikt aufgefuehrt. Mit -BeiKonflikt Neuere
+  entscheidet das Aenderungsdatum. Sind beide Seiten gleich alt, aber
+  inhaltlich verschieden, bleibt die Datei unangetastet - dann ist keine
+  Seite erkennbar aktueller.
+
+
+  SCHUTZMASSNAHMEN
+  ................
+
+  Kopieren veraendert echte Datenbestaende. Deshalb mehrere Sicherungen:
+
+      SIMULATION IST DER STANDARD
+          Ohne -Ausfuehren entsteht nur ein Plan, es wird nichts geschrieben.
+
+      ES WIRD NIE GELOESCHT
+          Dateien, die auf der Zielseite zu viel sind, bleiben liegen. Das
+          Script ist kein Spiegel-Abgleich.
+
+      ZIELPRUEFUNG UNMITTELBAR VOR DEM SCHREIBEN
+          Liegt dort wider Erwarten schon eine Datei, obwohl sie als fehlend
+          eingestuft war, wird sie NICHT ueberschrieben. Der Fall erscheint
+          stattdessen im Bericht.
+
+      ABBRUCH BEI UNVOLLSTAENDIG GELESENER ZIELSEITE
+          Konnte das Ziel nicht ganz eingelesen werden, ist "fehlt im Ziel"
+          nicht verlaesslich. Das Script kopiert dann nichts, bis die Ursache
+          behoben ist oder -TrotzLesefehler bewusst gesetzt wird.
+
+      -SICHERUNG
+          Legt ueberschriebene Dateien vorher unter
+          <OutputFolder>\Sicherung_<Zeitstempel>\ ab, mit erhaltener
+          Ordnerstruktur.
+
+  Zeitstempel werden beim Kopieren uebernommen. Ein zweiter Lauf findet die
+  Dateien deshalb als identisch vor und kopiert nichts erneut.
+
+
+  ERGEBNIS
+  ........
+
+  Der HTML-Bericht bekommt einen Abschnitt "3. Kopieren" mit allen Vorgaengen,
+  getrennt nach neu angelegt, ueberschrieben, uebersprungen und fehlgeschlagen.
+  Zusaetzlich entsteht Kopieren_<Zeitstempel>.csv mit Quelle, Ziel, Aktion und
+  Ergebnis je Datei.
+
+
+-------------------------------------------------------------------------------
+  8   BEISPIELE
 -------------------------------------------------------------------------------
 
   Backup gegen Original pruefen und den Bericht direkt anzeigen:
@@ -241,7 +339,7 @@
 
 
 -------------------------------------------------------------------------------
-  8   WAS MAN WISSEN SOLLTE
+  9   WAS MAN WISSEN SOLLTE
 -------------------------------------------------------------------------------
 
   GROSS-/KLEINSCHREIBUNG
@@ -279,8 +377,23 @@
 
 
 -------------------------------------------------------------------------------
-  9   AENDERUNGEN
+  10   AENDERUNGEN
 -------------------------------------------------------------------------------
+
+  VERSION 1.4
+
+      NEU - Kopieren. Fehlende und abweichende Dateien lassen sich wahlweise
+      in den anderen Ordner uebertragen: -Kopieren AnachB|BnachA|Beide,
+      eingegrenzt mit -KopiereWas. Ohne -Ausfuehren wird nur simuliert,
+      geloescht wird nie, und vor jedem Schreibvorgang prueft das Script das
+      Ziel noch einmal. Mit -Sicherung landen ueberschriebene Dateien vorher
+      in einem Sicherungsordner. Eigener Abschnitt im HTML-Bericht und eine
+      zusaetzliche Kopieren_<Zeitstempel>.csv. Einzelheiten in Abschnitt 7.
+
+      KORREKTUR - Get-Help zeigte nur die nackte Syntaxzeile statt der
+      Dokumentation. Ursache war die Requires-Zeile oberhalb des Hilfeblocks:
+      damit erkennt Windows PowerShell 5.1 die kommentarbasierte Hilfe nicht.
+      Sie steht jetzt darunter.
 
   VERSION 1.3.1
 

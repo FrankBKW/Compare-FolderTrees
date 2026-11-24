@@ -1,4 +1,3 @@
-#Requires -Version 5.1
 <#
 .SYNOPSIS
     Vergleicht zwei Ordnerstrukturen (inklusive aller Unterordner) und erzeugt
@@ -42,6 +41,39 @@
 .PARAMETER OpenReport
     HTML-Report am Ende automatisch oeffnen.
 
+.PARAMETER Kopieren
+    Fehlende bzw. abweichende Dateien in den jeweils anderen Ordner kopieren.
+    Ohne diesen Parameter wird nichts geschrieben.
+        AnachB  - von A nach B
+        BnachA  - von B nach A
+        Beide   - fehlende Dateien in beide Richtungen auffuellen
+
+    ACHTUNG: Ohne -Ausfuehren wird nur SIMULIERT. Es wird nie etwas geloescht.
+
+.PARAMETER KopiereWas
+    Fehlende       - nur Dateien, die auf der Zielseite fehlen (Standard)
+    Unterschiedliche - nur Dateien, die es beidseitig gibt, die aber abweichen
+    Alles          - beides
+
+.PARAMETER BeiKonflikt
+    Nur bei -Kopieren Beide und abweichenden Dateien relevant, weil dann unklar
+    ist, welche Seite gewinnt:
+        Ueberspringen - abweichende Dateien unangetastet lassen (Standard)
+        Neuere        - die Datei mit dem neueren Aenderungsdatum gewinnt
+
+.PARAMETER Ausfuehren
+    Kopiervorgang wirklich durchfuehren. Ohne diesen Schalter erstellt das
+    Script nur einen Plan und zeigt, was passieren wuerde.
+
+.PARAMETER Sicherung
+    Vor dem Ueberschreiben eine Kopie der bisherigen Zieldatei ablegen, unter
+    <OutputFolder>\Sicherung_<Zeitstempel>\ mit erhaltener Ordnerstruktur.
+
+.PARAMETER TrotzLesefehler
+    Kopieren auch dann ausfuehren, wenn die Zielseite nicht vollstaendig
+    gelesen werden konnte. Ohne diesen Schalter bricht das Script dann ab,
+    weil "fehlt im Ziel" in dem Fall nicht verlaesslich ist.
+
 .EXAMPLE
     .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup\Daten" -OpenReport
 
@@ -49,7 +81,7 @@
     .\Compare-FolderTrees.ps1 "D:\Projekte" "\\nas\projekte" -ExcludeFolder '.git','node_modules' -CompareHash
 
 .NOTES
-    Version 1.3.1
+    Version 1.4
 
     Der Status eines Verzeichnisses wird aus den enthaltenen Dateien abgeleitet,
     nicht aus Gesamtgroesse und Dateianzahl: zwei Ordner koennen zufaellig gleich
@@ -59,7 +91,28 @@
     lassen sich auf zwei Arten speichern - als ein Zeichen oder als Grundzeichen
     plus kombinierendem Trema. Ohne Normalisierung erscheint dieselbe Datei
     zweimal im Bericht: einmal als "Nur in A" und einmal als "Nur in B".
+
+    Das Kopieren (-Kopieren) simuliert ohne -Ausfuehren nur. Es loescht nie
+    etwas und ueberschreibt nie eine Datei, die als "fehlend" eingestuft war -
+    vor jedem Schreibvorgang wird das Ziel noch einmal geprueft.
+
+.EXAMPLE
+    # Erst ansehen, was passieren wuerde - schreibt nichts
+    .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Kopieren AnachB
+
+.EXAMPLE
+    # Fehlende Dateien wirklich nach B uebertragen
+    .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Kopieren AnachB -Ausfuehren
+
+.EXAMPLE
+    # Backup angleichen, auch geaenderte Dateien, alte Staende vorher sichern
+    .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Kopieren AnachB -KopiereWas Alles -Ausfuehren -Sicherung
 #>
+
+# Hinweis: Diese Zeile steht bewusst UNTER dem Hilfeblock. Steht sie darueber,
+# erkennt Windows PowerShell 5.1 die kommentarbasierte Hilfe nicht mehr und
+# "Get-Help .\Compare-FolderTrees.ps1" zeigt nur die nackte Syntaxzeile.
+#Requires -Version 5.1
 
 [CmdletBinding()]
 param(
@@ -84,7 +137,23 @@ param(
 
     [string]$CsvDelimiter = ';',
 
-    [switch]$OpenReport
+    [switch]$OpenReport,
+
+    # --- Kopieren (schreibt in die Ordner - siehe Hilfetext oben) ------------
+    [ValidateSet('AnachB', 'BnachA', 'Beide')]
+    [string]$Kopieren,
+
+    [ValidateSet('Fehlende', 'Unterschiedliche', 'Alles')]
+    [string]$KopiereWas = 'Fehlende',
+
+    [ValidateSet('Ueberspringen', 'Neuere')]
+    [string]$BeiKonflikt = 'Ueberspringen',
+
+    [switch]$Ausfuehren,
+
+    [switch]$Sicherung,
+
+    [switch]$TrotzLesefehler
 )
 
 $ErrorActionPreference = 'Stop'
@@ -140,6 +209,19 @@ function ConvertTo-NormKey {
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
     try   { return $Text.Normalize([System.Text.NormalizationForm]::FormC) }
     catch { return $Text }   # ungueltige Zeichenfolgen unveraendert lassen
+}
+
+function Get-ParentPath {
+    # Elternordner eines vollstaendigen Pfades.
+    #
+    # Bewusst ohne Split-Path: "Split-Path -LiteralPath <x> -Parent" ist unter
+    # Windows PowerShell 5.1 ein mehrdeutiger Parametersatz und schlaegt fehl,
+    # und die Variante ohne -LiteralPath verschluckt sich an Namen mit
+    # eckigen Klammern.
+    param([string]$Pfad)
+    $i = $Pfad.TrimEnd('\').LastIndexOf('\')
+    if ($i -lt 0) { return '' }
+    return $Pfad.Substring(0, $i)
 }
 
 function Get-ParentRel {
@@ -576,6 +658,227 @@ $dSame  = @($dirRows | Where-Object { $_.Status -eq 'Identisch' }).Count
 $totalA = [long]0; foreach ($f in $idxA.Files.Values) { $totalA += $f.Size }
 $totalB = [long]0; foreach ($f in $idxB.Files.Values) { $totalB += $f.Size }
 
+# Lesefehler je Seite - wird sowohl fuer die Warnung im Bericht als auch als
+# Sicherung vor dem Kopieren gebraucht.
+$errListA = @($idxA.Errors | Where-Object { $_ -like '`[A`]*' })
+$errListB = @($idxB.Errors | Where-Object { $_ -like '`[B`]*' })
+
+# ----------------------------------------------------------------------------
+# Kopieren
+#
+# Grundsaetze:
+#   - Ohne -Kopieren passiert gar nichts.
+#   - Ohne -Ausfuehren wird nur ein Plan erstellt, nichts geschrieben.
+#   - Es wird NIE etwas geloescht.
+#   - Unmittelbar vor jedem Schreibvorgang wird das Ziel noch einmal geprueft.
+#     Taucht dort wider Erwarten schon eine Datei auf, wird sie nicht
+#     ueberschrieben, sondern der Fall gemeldet.
+# ----------------------------------------------------------------------------
+
+$copyRows     = New-Object 'System.Collections.Generic.List[object]'
+$copyAusgefue = $false
+$sicherungDir = ''
+
+if ($Kopieren) {
+
+    Write-Host 'Erstelle Kopierplan ...' -ForegroundColor Cyan
+
+    $rootAFull = $idxA.Root.TrimEnd('\')
+    $rootBFull = $idxB.Root.TrimEnd('\')
+
+    function New-CopyEntry {
+        param(
+            [string]$Quelle, [string]$Ziel, [string]$Aktion,
+            [string]$Richtung, [string]$Rel, $Groesse, [string]$Grund
+        )
+        return [pscustomobject]@{
+            Richtung      = $Richtung
+            Aktion        = $Aktion        # Neu | Ueberschreiben | Uebersprungen
+            RelativerPfad = $Rel
+            Groesse_Bytes = $Groesse
+            Groesse       = (Format-Size $Groesse)
+            Quelle        = $Quelle
+            Ziel          = $Ziel
+            Ergebnis      = 'Geplant'
+            Meldung       = $Grund
+        }
+    }
+
+    # Zielpfad fuer eine Datei, die auf der Zielseite noch gar nicht existiert:
+    # aus dem Quellpfad abgeleitet, damit die Schreibweise der Quelle erhalten
+    # bleibt. Bei vorhandenen Zieldateien wird dagegen deren echter Pfad
+    # verwendet - sonst entstuende bei abweichender Umlaut-Kodierung eine
+    # zweite Datei neben der bestehenden.
+    function Get-NeuesZiel {
+        param([string]$QuellVoll, [string]$QuellRoot, [string]$ZielRoot)
+        $rel = $QuellVoll.Substring($QuellRoot.Length).TrimStart('\')
+        return (Join-Path $ZielRoot $rel)
+    }
+
+    foreach ($f in $fileRows) {
+
+        $nimmFehlende = ($KopiereWas -eq 'Fehlende' -or $KopiereWas -eq 'Alles')
+        $nimmDiff     = ($KopiereWas -eq 'Unterschiedliche' -or $KopiereWas -eq 'Alles')
+
+        switch ($f.Status) {
+
+            'Nur in A' {
+                if ($nimmFehlende -and ($Kopieren -eq 'AnachB' -or $Kopieren -eq 'Beide')) {
+                    $ziel = Get-NeuesZiel -QuellVoll $f.PfadA -QuellRoot $rootAFull -ZielRoot $rootBFull
+                    $copyRows.Add((New-CopyEntry -Quelle $f.PfadA -Ziel $ziel -Aktion 'Neu' `
+                        -Richtung 'A -> B' -Rel $f.RelativerPfad -Groesse $f.GroesseA_Bytes -Grund 'Fehlt in B'))
+                }
+            }
+
+            'Nur in B' {
+                if ($nimmFehlende -and ($Kopieren -eq 'BnachA' -or $Kopieren -eq 'Beide')) {
+                    $ziel = Get-NeuesZiel -QuellVoll $f.PfadB -QuellRoot $rootBFull -ZielRoot $rootAFull
+                    $copyRows.Add((New-CopyEntry -Quelle $f.PfadB -Ziel $ziel -Aktion 'Neu' `
+                        -Richtung 'B -> A' -Rel $f.RelativerPfad -Groesse $f.GroesseB_Bytes -Grund 'Fehlt in A'))
+                }
+            }
+
+            'Unterschiedlich' {
+                if (-not $nimmDiff) { break }
+
+                if ($Kopieren -eq 'AnachB') {
+                    $copyRows.Add((New-CopyEntry -Quelle $f.PfadA -Ziel $f.PfadB -Aktion 'Ueberschreiben' `
+                        -Richtung 'A -> B' -Rel $f.RelativerPfad -Groesse $f.GroesseA_Bytes -Grund $f.Unterschied))
+                }
+                elseif ($Kopieren -eq 'BnachA') {
+                    $copyRows.Add((New-CopyEntry -Quelle $f.PfadB -Ziel $f.PfadA -Aktion 'Ueberschreiben' `
+                        -Richtung 'B -> A' -Rel $f.RelativerPfad -Groesse $f.GroesseB_Bytes -Grund $f.Unterschied))
+                }
+                else {
+                    # Richtung "Beide": welche Seite gewinnt, ist nicht von selbst klar.
+                    if ($BeiKonflikt -eq 'Ueberspringen') {
+                        $copyRows.Add((New-CopyEntry -Quelle $f.PfadA -Ziel $f.PfadB -Aktion 'Uebersprungen' `
+                            -Richtung '-' -Rel $f.RelativerPfad -Groesse $f.GroesseA_Bytes `
+                            -Grund 'Abweichend, Richtung unklar - mit -BeiKonflikt Neuere oder fester Richtung kopieren'))
+                    } else {
+                        $dA = [datetime]$f.GeaendertA
+                        $dB = [datetime]$f.GeaendertB
+                        $delta = ($dA - $dB).TotalSeconds
+                        if ([math]::Abs($delta) -le $TimeToleranceSeconds) {
+                            $copyRows.Add((New-CopyEntry -Quelle $f.PfadA -Ziel $f.PfadB -Aktion 'Uebersprungen' `
+                                -Richtung '-' -Rel $f.RelativerPfad -Groesse $f.GroesseA_Bytes `
+                                -Grund 'Gleich alt, aber unterschiedlicher Inhalt - keine Seite ist erkennbar neuer'))
+                        } elseif ($delta -gt 0) {
+                            $copyRows.Add((New-CopyEntry -Quelle $f.PfadA -Ziel $f.PfadB -Aktion 'Ueberschreiben' `
+                                -Richtung 'A -> B' -Rel $f.RelativerPfad -Groesse $f.GroesseA_Bytes -Grund 'A ist neuer'))
+                        } else {
+                            $copyRows.Add((New-CopyEntry -Quelle $f.PfadB -Ziel $f.PfadA -Aktion 'Ueberschreiben' `
+                                -Richtung 'B -> A' -Rel $f.RelativerPfad -Groesse $f.GroesseB_Bytes -Grund 'B ist neuer'))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    $planNeu    = @($copyRows | Where-Object { $_.Aktion -eq 'Neu' })
+    $planUeber  = @($copyRows | Where-Object { $_.Aktion -eq 'Ueberschreiben' })
+    $planSkip   = @($copyRows | Where-Object { $_.Aktion -eq 'Uebersprungen' })
+    $planBytes  = [long]0
+    foreach ($c in ($planNeu + $planUeber)) { if ($c.Groesse_Bytes) { $planBytes += $c.Groesse_Bytes } }
+
+    Write-Host ''
+    Write-Host ('Kopierplan: {0} neu, {1} zu ueberschreiben, {2} uebersprungen ({3})' -f `
+        $planNeu.Count, $planUeber.Count, $planSkip.Count, (Format-Size $planBytes)) -ForegroundColor White
+
+    # --- Sicherung: Zielseite unvollstaendig gelesen? ------------------------
+    # "Fehlt im Ziel" ist dann nicht verlaesslich - genau so entstehen
+    # Kopien von Dateien, die in Wahrheit laengst vorhanden sind.
+    $zielMitFehlern = New-Object 'System.Collections.Generic.List[string]'
+    if (($Kopieren -eq 'AnachB' -or $Kopieren -eq 'Beide') -and $errListB.Count -gt 0) { $zielMitFehlern.Add("B ($($errListB.Count))") }
+    if (($Kopieren -eq 'BnachA' -or $Kopieren -eq 'Beide') -and $errListA.Count -gt 0) { $zielMitFehlern.Add("A ($($errListA.Count))") }
+
+    if ($Ausfuehren -and $zielMitFehlern.Count -gt 0 -and -not $TrotzLesefehler) {
+        Write-Host ''
+        Write-Host 'ABBRUCH: die Zielseite konnte nicht vollstaendig gelesen werden.' -ForegroundColor Red
+        Write-Host ("  Betroffen: Seite {0} - uebersprungene Objekte" -f ($zielMitFehlern -join ', ')) -ForegroundColor Yellow
+        Write-Host '  "Fehlt im Ziel" ist dadurch nicht verlaesslich. Es wurde nichts kopiert.' -ForegroundColor Yellow
+        Write-Host '  Ursache beheben (Pfadlaenge, Rechte, Verknuepfungen) oder bewusst' -ForegroundColor DarkGray
+        Write-Host '  mit -TrotzLesefehler wiederholen.' -ForegroundColor DarkGray
+        $Ausfuehren = $false
+        foreach ($c in $copyRows) {
+            if ($c.Aktion -ne 'Uebersprungen') { $c.Ergebnis = 'Abgebrochen'; $c.Meldung = 'Zielseite unvollstaendig gelesen' }
+        }
+    }
+
+    # --- Ausfuehren ----------------------------------------------------------
+    if ($Ausfuehren -and ($planNeu.Count + $planUeber.Count) -gt 0) {
+
+        if ($Sicherung -and $planUeber.Count -gt 0) {
+            $sicherungDir = Join-Path $OutputFolder "Sicherung_$stamp"
+            New-Item -ItemType Directory -Path $sicherungDir -Force | Out-Null
+            Write-Host ("Sicherung ueberschriebener Dateien: {0}" -f $sicherungDir) -ForegroundColor DarkGray
+        }
+
+        Write-Host 'Kopiere ...' -ForegroundColor Cyan
+        $copyAusgefue = $true
+        $k = 0
+        $gesamt = $planNeu.Count + $planUeber.Count
+
+        foreach ($c in $copyRows) {
+            if ($c.Aktion -eq 'Uebersprungen') { $c.Ergebnis = 'Uebersprungen'; continue }
+
+            $k++
+            Write-Progress -Activity 'Kopieren' -Status "$k / $gesamt" -PercentComplete (($k / $gesamt) * 100)
+
+            try {
+                if (-not (Test-Path -LiteralPath $c.Quelle)) {
+                    $c.Ergebnis = 'Fehler'; $c.Meldung = 'Quelldatei nicht mehr vorhanden'
+                    continue
+                }
+
+                $zielDa = Test-Path -LiteralPath $c.Ziel
+
+                # Sicherheitsnetz: als "neu" geplant, aber im Ziel liegt schon etwas.
+                if ($c.Aktion -eq 'Neu' -and $zielDa) {
+                    $c.Ergebnis = 'Uebersprungen'
+                    $c.Meldung  = 'Ziel existiert bereits - nicht ueberschrieben (war als fehlend eingestuft)'
+                    continue
+                }
+
+                $zielOrdner = Get-ParentPath $c.Ziel
+                if (-not (Test-Path -LiteralPath $zielOrdner)) {
+                    New-Item -ItemType Directory -Path $zielOrdner -Force | Out-Null
+                }
+
+                if ($c.Aktion -eq 'Ueberschreiben' -and $zielDa -and $sicherungDir) {
+                    $relZiel = $c.RelativerPfad
+                    $sicherZiel = Join-Path $sicherungDir $relZiel
+                    $sicherOrdner = Get-ParentPath $sicherZiel
+                    if (-not (Test-Path -LiteralPath $sicherOrdner)) {
+                        New-Item -ItemType Directory -Path $sicherOrdner -Force | Out-Null
+                    }
+                    Copy-Item -LiteralPath $c.Ziel -Destination $sicherZiel -Force -ErrorAction Stop
+                }
+
+                Copy-Item -LiteralPath $c.Quelle -Destination $c.Ziel -Force -ErrorAction Stop
+                $c.Ergebnis = 'Kopiert'
+            }
+            catch {
+                $c.Ergebnis = 'Fehler'
+                $c.Meldung  = $_.Exception.Message
+            }
+        }
+        Write-Progress -Activity 'Kopieren' -Completed
+    }
+    elseif (-not $Ausfuehren) {
+        foreach ($c in $copyRows) {
+            if ($c.Aktion -eq 'Uebersprungen') { $c.Ergebnis = 'Uebersprungen' }
+            elseif ($c.Ergebnis -eq 'Geplant')  { $c.Ergebnis = 'Simuliert' }
+        }
+    }
+}
+
+$cKopiert = @($copyRows | Where-Object { $_.Ergebnis -eq 'Kopiert' }).Count
+$cFehler  = @($copyRows | Where-Object { $_.Ergebnis -eq 'Fehler' }).Count
+$cSkip    = @($copyRows | Where-Object { $_.Ergebnis -eq 'Uebersprungen' }).Count
+$cPlan    = @($copyRows | Where-Object { $_.Ergebnis -eq 'Simuliert' }).Count
+
 # ----------------------------------------------------------------------------
 # CSV-Ausgabe
 # ----------------------------------------------------------------------------
@@ -638,6 +941,12 @@ foreach ($f in $fileRows) {
     })
 }
 $combined | Export-Csv -LiteralPath $csvAll -Delimiter $CsvDelimiter -Encoding UTF8 -NoTypeInformation
+
+$csvCopy = ''
+if ($copyRows.Count -gt 0) {
+    $csvCopy = Join-Path $OutputFolder "Kopieren_$stamp.csv"
+    $copyRows | Export-Csv -LiteralPath $csvCopy -Delimiter $CsvDelimiter -Encoding UTF8 -NoTypeInformation
+}
 
 # ----------------------------------------------------------------------------
 # HTML-Ausgabe
@@ -707,6 +1016,10 @@ tr[data-status="same"]  td:first-child{border-left:3px solid #10b981}
 .warn h3{margin:0 0 6px;font-size:15px;color:#991b1b}
 .warn p{margin:0 0 6px}
 .warn ul{margin:6px 0 0 18px;padding:0}
+.done{background:#ecfdf5;border:1px solid #6ee7b7;border-left:5px solid #059669;
+     border-radius:8px;padding:14px 16px;margin-bottom:18px}
+.done h3{margin:0 0 6px;font-size:15px;color:#065f46}
+.done p{margin:0 0 6px}
 .missing{color:#b91c1c;font-weight:600}
 .neg{color:#b91c1c}.pos{color:#047857}
 footer{margin-top:28px;color:#6b7280;font-size:12.5px}
@@ -851,9 +1164,6 @@ $null = $sb.AppendLine('</div>')
 # Warnung, wenn eine Seite unvollstaendig eingelesen wurde. Das ist die haeufigste
 # Ursache fuer scheinbar falsche Ergebnisse: was auf einer Seite nicht gelesen
 # werden konnte, erscheint zwangslaeufig als "nur auf der anderen Seite vorhanden".
-$errListA = @($idxA.Errors | Where-Object { $_ -like '`[A`]*' })
-$errListB = @($idxB.Errors | Where-Object { $_ -like '`[B`]*' })
-
 if ($errListA.Count -gt 0 -or $errListB.Count -gt 0) {
     $null = $sb.AppendLine('<div class="warn">')
     $null = $sb.AppendLine('<h3>Achtung: eine Seite konnte nicht vollst&auml;ndig gelesen werden</h3>')
@@ -956,6 +1266,69 @@ foreach ($f in $fileRows) {
 }
 $null = $sb.AppendLine('</tbody></table></div></div>')
 
+# ---- Tabelle 3: Kopieren ----
+if ($copyRows.Count -gt 0) {
+    $null = $sb.AppendLine('<h2>3. Kopieren</h2>')
+
+    if ($copyAusgefue) {
+        $null = $sb.AppendLine('<div class="done"><h3>Ausgef&uuml;hrt</h3><p>' +
+            $cKopiert + ' Dateien kopiert, ' + $cSkip + ' &uuml;bersprungen, ' + $cFehler + ' Fehler. ' +
+            'Es wurde nichts gel&ouml;scht.</p>' +
+            $(if ($sicherungDir) { '<p>Sicherung der &uuml;berschriebenen Dateien: <code>' + (ConvertTo-HtmlText $sicherungDir) + '</code></p>' } else { '' }) +
+            '</div>')
+    } else {
+        $null = $sb.AppendLine('<div class="warn"><h3>Nur Simulation &mdash; es wurde nichts geschrieben</h3>' +
+            '<p>' + $cPlan + ' Dateien w&uuml;rden kopiert, ' + $cSkip + ' blieben unangetastet. ' +
+            'Zum tats&auml;chlichen Ausf&uuml;hren den Aufruf um <code>-Ausfuehren</code> erg&auml;nzen.</p></div>')
+    }
+
+    $cNeu   = @($copyRows | Where-Object { $_.Aktion -eq 'Neu' }).Count
+    $cUeber = @($copyRows | Where-Object { $_.Aktion -eq 'Ueberschreiben' }).Count
+
+    $null = $sb.AppendLine('<div class="panel">')
+    $th  = '<div class="toolbar">'
+    $th += '<input class="q" type="search" placeholder="Suchen (Pfad / Name) ...">'
+    $th += '<div class="filters">'
+    $th += '<button data-status="all" class="active">Alle</button>'
+    $th += '<button data-status="neu">Neu angelegt (' + $cNeu + ')</button>'
+    $th += '<button data-status="ueber">&Uuml;berschrieben (' + $cUeber + ')</button>'
+    $th += '<button data-status="skip">&Uuml;bersprungen (' + $cSkip + ')</button>'
+    if ($cFehler -gt 0) { $th += '<button data-status="err">Fehler (' + $cFehler + ')</button>' }
+    $th += '</div><span class="info count"></span></div>'
+    $null = $sb.AppendLine($th)
+
+    $null = $sb.AppendLine('<div class="scroll"><table><thead><tr>')
+    $null = $sb.AppendLine('<th>Ergebnis</th><th>Richtung</th><th>Datei (relativ)</th><th class="num">Gr&ouml;&szlig;e</th><th>Aktion</th><th>Anmerkung</th>')
+    $null = $sb.AppendLine('</tr></thead><tbody>')
+
+    foreach ($c in $copyRows) {
+        $k = 'skip'
+        if     ($c.Ergebnis -eq 'Fehler')  { $k = 'err' }
+        elseif ($c.Aktion   -eq 'Neu')     { $k = 'neu' }
+        elseif ($c.Aktion   -eq 'Ueberschreiben') { $k = 'ueber' }
+
+        $badge = 'b-same'
+        if     ($k -eq 'err')   { $badge = 'b-onlyB' }
+        elseif ($k -eq 'neu')   { $badge = 'b-onlyA' }
+        elseif ($k -eq 'ueber') { $badge = 'b-diff' }
+
+        $search = ($c.RelativerPfad + ' ' + $c.Richtung).ToLower()
+        $gr = '<td class="num" data-sort="0">&ndash;</td>'
+        if ($null -ne $c.Groesse_Bytes) {
+            $gr = '<td class="num" data-sort="' + $c.Groesse_Bytes + '">' + $c.Groesse + '</td>'
+        }
+
+        $null = $sb.AppendLine('<tr data-status="' + $k + '" data-search="' + (ConvertTo-HtmlText $search) + '">' +
+            '<td data-sort="' + $c.Ergebnis + '"><span class="badge ' + $badge + '">' + (ConvertTo-HtmlText $c.Ergebnis) + '</span></td>' +
+            '<td>' + (ConvertTo-HtmlText $c.Richtung) + '</td>' +
+            '<td class="path">' + (ConvertTo-HtmlText $c.RelativerPfad) + '</td>' +
+            $gr +
+            '<td>' + (ConvertTo-HtmlText $c.Aktion) + '</td>' +
+            '<td>' + (ConvertTo-HtmlText $c.Meldung) + '</td></tr>')
+    }
+    $null = $sb.AppendLine('</tbody></table></div></div>')
+}
+
 # ---- Lesefehler ----
 $allErrors = @($idxA.Errors) + @($idxB.Errors)
 if ($allErrors.Count -gt 0) {
@@ -972,7 +1345,8 @@ $dauer = New-TimeSpan -Start $startTime -End (Get-Date)
 $null = $sb.AppendLine('<footer>Laufzeit: ' + ('{0:hh\:mm\:ss}' -f $dauer) + ' &middot; CSV-Dateien: ' +
     (ConvertTo-HtmlText (Split-Path $csvAll -Leaf)) + ', ' +
     (ConvertTo-HtmlText (Split-Path $csvDirs -Leaf)) + ', ' +
-    (ConvertTo-HtmlText (Split-Path $csvFiles -Leaf)) + '</footer>')
+    (ConvertTo-HtmlText (Split-Path $csvFiles -Leaf)) +
+    $(if ($csvCopy) { ', ' + (ConvertTo-HtmlText (Split-Path $csvCopy -Leaf)) } else { '' }) + '</footer>')
 $null = $sb.AppendLine('<script>' + $js + '</script>')
 $null = $sb.AppendLine('</body></html>')
 
@@ -999,11 +1373,26 @@ if ($errListA.Count -gt 0 -or $errListB.Count -gt 0) {
     }
     Write-Host '  Einzelheiten stehen im HTML-Bericht unter "Hinweise".' -ForegroundColor DarkGray
 }
+if ($copyRows.Count -gt 0) {
+    Write-Host ''
+    if ($copyAusgefue) {
+        Write-Host ('Kopiert       : {0} Dateien | uebersprungen: {1} | Fehler: {2}' -f $cKopiert, $cSkip, $cFehler) -ForegroundColor Green
+        if ($sicherungDir) { Write-Host ('Sicherung     : {0}' -f $sicherungDir) -ForegroundColor DarkGray }
+    } else {
+        Write-Host ('SIMULATION    : {0} Dateien wuerden kopiert | uebersprungen: {1}' -f $cPlan, $cSkip) -ForegroundColor Yellow
+        Write-Host '                Es wurde nichts geschrieben. Zum Ausfuehren -Ausfuehren ergaenzen.' -ForegroundColor DarkGray
+    }
+    if ($cFehler -gt 0) {
+        Write-Host ("                {0} Fehler - Einzelheiten in der Kopier-CSV und im Bericht." -f $cFehler) -ForegroundColor Red
+    }
+}
+
 Write-Host ''
 Write-Host ('HTML : {0}' -f $htmlPath) -ForegroundColor Green
 Write-Host ('CSV  : {0}' -f $csvAll)   -ForegroundColor Green
 Write-Host ('CSV  : {0}' -f $csvDirs)  -ForegroundColor Green
 Write-Host ('CSV  : {0}' -f $csvFiles) -ForegroundColor Green
+if ($csvCopy) { Write-Host ('CSV  : {0}' -f $csvCopy) -ForegroundColor Green }
 
 if ($OpenReport) { Start-Process $htmlPath }
 
@@ -1012,6 +1401,12 @@ if ($OpenReport) { Start-Process $htmlPath }
     CsvGesamt        = $csvAll
     CsvVerzeichnisse = $csvDirs
     CsvDateien       = $csvFiles
+    CsvKopieren      = $csvCopy
     AnzahlOrdner     = $dirRows.Count
     AnzahlDateien    = $fileRows.Count
+    Kopiert          = $cKopiert
+    Simuliert        = $cPlan
+    Uebersprungen    = $cSkip
+    Kopierfehler     = $cFehler
+    Sicherungsordner = $sicherungDir
 }
