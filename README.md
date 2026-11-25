@@ -145,6 +145,55 @@ verlieren.
 | `-Ausfuehren`      | aus             | wirklich kopieren — ohne diesen Schalter nur Simulation   |
 | `-Sicherung`       | aus             | überschriebene Dateien vorher wegsichern                   |
 | `-TrotzLesefehler` | aus             | kopieren, obwohl die Zielseite unvollständig gelesen wurde |
+| `-Auswahl`         | *aus*           | Pfad zu einer im HTML-Bericht angekreuzten Auswahlliste    |
+
+## Dateien im Bericht ankreuzen
+
+Statt ganzer Kategorien lassen sich einzelne Dateien auswählen. In der
+Dateitabelle stehen dafür zwei Ankreuzspalten ganz links:
+
+| Spalte | Bedeutung                        |
+|--------|----------------------------------|
+| **→ B** | diese Datei von A nach B kopieren |
+| **→ A** | diese Datei von B nach A kopieren |
+
+Pro Zeile ist nur eine Richtung möglich — das zweite Häkchen schaltet das erste
+ab. Angeboten wird nur, was auch geht: bei `Nur in A` gibt es ausschließlich
+**→ B**, bei `Nur in B` nur **→ A**, bei `Unterschiedlich` beides. Identische
+Dateien haben keine Ankreuzfelder.
+
+Unter der Tabelle zeigt ein Kasten laufend mit, wie viele Dateien und wie viele
+Megabyte ausgewählt sind, getrennt nach Richtung. Die Schaltflächen **Alle
+sichtbaren → B** und **→ A** wirken nur auf die gerade gefilterten Zeilen —
+damit lässt sich etwa über „Nur Abweichungen" vorfiltern und dann alles auf
+einmal ankreuzen.
+
+### Warum über eine Liste und nicht direkt
+
+Eine lokal geöffnete HTML-Seite darf aus Sicherheitsgründen nicht auf das
+Dateisystem schreiben; kein Browser erlaubt das. Der Bericht sammelt deshalb nur
+die Häkchen ein und erzeugt daraus eine Auswahlliste. Kopiert wird
+ausschließlich vom Script — mit denselben Schutzmaßnahmen wie sonst auch.
+
+```powershell
+# 1. Im Bericht ankreuzen, dann "Auswahlliste speichern" (landet als Auswahl.txt)
+
+# 2. Ansehen, was passieren würde:
+.\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Auswahl "$HOME\Downloads\Auswahl.txt"
+
+# 3. Ausführen:
+.\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Auswahl "$HOME\Downloads\Auswahl.txt" -Ausfuehren
+```
+
+Den fertigen Befehl zeigt der Bericht unter den Schaltflächen an. Falls der
+Browser das Speichern blockiert, steht die Liste zusätzlich zum Kopieren in
+einem aufklappbaren Textfeld.
+
+Die Auswahlliste merkt sich, zu welchem Ordnerpaar sie gehört. Wird sie
+versehentlich auf andere Ordner angewendet, bricht das Script ab und nennt
+beide Pfadpaare. Einträge, die nicht mehr zum aktuellen Vergleich passen — etwa
+weil der Bericht veraltet ist —, werden einzeln gemeldet und übersprungen,
+statt irgendetwas zu raten.
 
 ## Kopieren
 
@@ -249,6 +298,18 @@ if ($r.AnzahlDateien -gt 0) { Start-Process $r.HtmlReport }
   Zum Filtern von Dateien ist `-Filter` zuständig.
 
 ## Änderungen
+
+### Version 1.5
+
+* **Neu: Dateien im Bericht ankreuzen.** Die Dateitabelle hat zwei
+  Ankreuzspalten **→ B** und **→ A**, pro Zeile gegenseitig ausschließend und
+  nur dort angeboten, wo die Richtung möglich ist. Ein Kasten unter der Tabelle
+  zählt die Auswahl mit und erzeugt daraus eine Auswahlliste, die das Script
+  über `-Auswahl` ausführt. Die Liste ist an ihr Ordnerpaar gebunden; auf
+  andere Ordner angewendet bricht das Script ab.
+* **Korrektur:** Mit `-Ausfuehren`, aber leerem Kopierplan blieben abgewiesene
+  Einträge ohne Ergebnis stehen und die Zusammenfassung meldete „Simulation",
+  obwohl ausgeführt wurde.
 
 ### Version 1.4
 

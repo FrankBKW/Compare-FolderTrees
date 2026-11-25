@@ -74,6 +74,15 @@
     gelesen werden konnte. Ohne diesen Schalter bricht das Script dann ab,
     weil "fehlt im Ziel" in dem Fall nicht verlaesslich ist.
 
+.PARAMETER Auswahl
+    Pfad zu einer Auswahlliste, die im HTML-Bericht zusammengeklickt wurde.
+    Dort lassen sich je Datei Haekchen fuer "nach B" oder "nach A" setzen; der
+    Bericht erzeugt daraus eine Textdatei, die hier uebergeben wird.
+
+    Kopiert wird dann ausschliesslich, was in dieser Liste steht. -Kopieren und
+    -KopiereWas werden dabei nicht verwendet. Ohne -Ausfuehren wird auch hier
+    nur simuliert.
+
 .EXAMPLE
     .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup\Daten" -OpenReport
 
@@ -81,7 +90,7 @@
     .\Compare-FolderTrees.ps1 "D:\Projekte" "\\nas\projekte" -ExcludeFolder '.git','node_modules' -CompareHash
 
 .NOTES
-    Version 1.4
+    Version 1.5
 
     Der Status eines Verzeichnisses wird aus den enthaltenen Dateien abgeleitet,
     nicht aus Gesamtgroesse und Dateianzahl: zwei Ordner koennen zufaellig gleich
@@ -107,6 +116,10 @@
 .EXAMPLE
     # Backup angleichen, auch geaenderte Dateien, alte Staende vorher sichern
     .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Kopieren AnachB -KopiereWas Alles -Ausfuehren -Sicherung
+
+.EXAMPLE
+    # Im HTML-Bericht angekreuzte Dateien uebertragen
+    .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Auswahl "C:\Users\ich\Downloads\Auswahl.txt" -Ausfuehren
 #>
 
 # Hinweis: Diese Zeile steht bewusst UNTER dem Hilfeblock. Steht sie darueber,
@@ -153,7 +166,9 @@ param(
 
     [switch]$Sicherung,
 
-    [switch]$TrotzLesefehler
+    [switch]$TrotzLesefehler,
+
+    [string]$Auswahl
 )
 
 $ErrorActionPreference = 'Stop'
@@ -679,7 +694,11 @@ $copyRows     = New-Object 'System.Collections.Generic.List[object]'
 $copyAusgefue = $false
 $sicherungDir = ''
 
-if ($Kopieren) {
+if ($Kopieren -and $Auswahl) {
+    throw '-Kopieren und -Auswahl schliessen sich aus: entweder alle Dateien einer Kategorie oder genau die angekreuzten.'
+}
+
+if ($Kopieren -or $Auswahl) {
 
     Write-Host 'Erstelle Kopierplan ...' -ForegroundColor Cyan
 
@@ -715,7 +734,99 @@ if ($Kopieren) {
         return (Join-Path $ZielRoot $rel)
     }
 
+    # --- Variante 1: Auswahlliste aus dem HTML-Bericht ----------------------
+    if ($Auswahl) {
+
+        if (-not (Test-Path -LiteralPath $Auswahl)) { throw "Auswahlliste nicht gefunden: $Auswahl" }
+
+        $zeilen  = Get-Content -LiteralPath $Auswahl -Encoding UTF8
+        $listeA  = ''
+        $listeB  = ''
+        $eintraege = New-Object 'System.Collections.Generic.List[object]'
+
+        foreach ($z in $zeilen) {
+            if ([string]::IsNullOrWhiteSpace($z)) { continue }
+            if ($z.StartsWith('#')) {
+                if ($z -match '^#\s*A\s*=\s*(.+)$') { $listeA = $Matches[1].Trim() }
+                if ($z -match '^#\s*B\s*=\s*(.+)$') { $listeB = $Matches[1].Trim() }
+                continue
+            }
+            $teile = $z.Split("`t", 2)
+            if ($teile.Count -lt 2) { continue }
+            $eintraege.Add([pscustomobject]@{ Richtung = $teile[0].Trim(); Rel = $teile[1].Trim() })
+        }
+
+        # Die Liste gehoert zu einem bestimmten Ordnerpaar. Wird sie versehentlich
+        # auf andere Ordner angewendet, waere das Ergebnis voellig unvorhersehbar.
+        if ($listeA -and $listeB) {
+            if ($listeA -ne $rootAFull -or $listeB -ne $rootBFull) {
+                Write-Host ''
+                Write-Host 'ABBRUCH: die Auswahlliste gehoert zu anderen Ordnern.' -ForegroundColor Red
+                Write-Host ("  Liste  A = {0}" -f $listeA)    -ForegroundColor Yellow
+                Write-Host ("  Liste  B = {0}" -f $listeB)    -ForegroundColor Yellow
+                Write-Host ("  Aufruf A = {0}" -f $rootAFull) -ForegroundColor Yellow
+                Write-Host ("  Aufruf B = {0}" -f $rootBFull) -ForegroundColor Yellow
+                throw 'Auswahlliste passt nicht zu den angegebenen Pfaden.'
+            }
+        }
+
+        Write-Host ("Auswahlliste: {0} Eintraege aus '{1}'" -f $eintraege.Count, $Auswahl) -ForegroundColor Cyan
+
+        # Nachschlagewerk ueber den normalisierten relativen Pfad
+        $rowIndex = New-Object 'System.Collections.Generic.Dictionary[string,object]' -ArgumentList ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($f in $fileRows) { $rowIndex[$f.RelativerPfad] = $f }
+
+        foreach ($e in $eintraege) {
+            $row = $null
+            if (-not $rowIndex.TryGetValue((ConvertTo-NormKey $e.Rel), [ref]$row)) {
+                $copyRows.Add((New-CopyEntry -Quelle '' -Ziel '' -Aktion 'Uebersprungen' -Richtung '-' `
+                    -Rel $e.Rel -Groesse $null -Grund 'Steht nicht im aktuellen Vergleich - Bericht veraltet?'))
+                continue
+            }
+
+            if ($e.Richtung -eq 'AnachB') {
+                if ($row.PfadA -eq '') {
+                    $copyRows.Add((New-CopyEntry -Quelle '' -Ziel '' -Aktion 'Uebersprungen' -Richtung '-' `
+                        -Rel $row.RelativerPfad -Groesse $null -Grund 'Nach B angekreuzt, aber in A nicht vorhanden'))
+                    continue
+                }
+                if ($row.PfadB -eq '') {
+                    $ziel   = Get-NeuesZiel -QuellVoll $row.PfadA -QuellRoot $rootAFull -ZielRoot $rootBFull
+                    $aktion = 'Neu'
+                } else {
+                    $ziel   = $row.PfadB
+                    $aktion = 'Ueberschreiben'
+                }
+                $copyRows.Add((New-CopyEntry -Quelle $row.PfadA -Ziel $ziel -Aktion $aktion -Richtung 'A -> B' `
+                    -Rel $row.RelativerPfad -Groesse $row.GroesseA_Bytes -Grund 'Im Bericht angekreuzt'))
+            }
+            elseif ($e.Richtung -eq 'BnachA') {
+                if ($row.PfadB -eq '') {
+                    $copyRows.Add((New-CopyEntry -Quelle '' -Ziel '' -Aktion 'Uebersprungen' -Richtung '-' `
+                        -Rel $row.RelativerPfad -Groesse $null -Grund 'Nach A angekreuzt, aber in B nicht vorhanden'))
+                    continue
+                }
+                if ($row.PfadA -eq '') {
+                    $ziel   = Get-NeuesZiel -QuellVoll $row.PfadB -QuellRoot $rootBFull -ZielRoot $rootAFull
+                    $aktion = 'Neu'
+                } else {
+                    $ziel   = $row.PfadA
+                    $aktion = 'Ueberschreiben'
+                }
+                $copyRows.Add((New-CopyEntry -Quelle $row.PfadB -Ziel $ziel -Aktion $aktion -Richtung 'B -> A' `
+                    -Rel $row.RelativerPfad -Groesse $row.GroesseB_Bytes -Grund 'Im Bericht angekreuzt'))
+            }
+            else {
+                $copyRows.Add((New-CopyEntry -Quelle '' -Ziel '' -Aktion 'Uebersprungen' -Richtung '-' `
+                    -Rel $e.Rel -Groesse $null -Grund ("Unbekannte Richtung '" + $e.Richtung + "'")))
+            }
+        }
+    }
+
+    # --- Variante 2: ganze Kategorien ueber -Kopieren -----------------------
     foreach ($f in $fileRows) {
+
+        if ($Auswahl) { break }
 
         $nimmFehlende = ($KopiereWas -eq 'Fehlende' -or $KopiereWas -eq 'Alles')
         $nimmDiff     = ($KopiereWas -eq 'Unterschiedliche' -or $KopiereWas -eq 'Alles')
@@ -789,9 +900,14 @@ if ($Kopieren) {
     # --- Sicherung: Zielseite unvollstaendig gelesen? ------------------------
     # "Fehlt im Ziel" ist dann nicht verlaesslich - genau so entstehen
     # Kopien von Dateien, die in Wahrheit laengst vorhanden sind.
+    # Zielseiten aus dem tatsaechlichen Plan ableiten - bei einer Auswahlliste
+    # steht die Richtung je Datei und nicht global fest.
+    $zielB = @($copyRows | Where-Object { $_.Richtung -eq 'A -> B' -and $_.Aktion -ne 'Uebersprungen' }).Count -gt 0
+    $zielA = @($copyRows | Where-Object { $_.Richtung -eq 'B -> A' -and $_.Aktion -ne 'Uebersprungen' }).Count -gt 0
+
     $zielMitFehlern = New-Object 'System.Collections.Generic.List[string]'
-    if (($Kopieren -eq 'AnachB' -or $Kopieren -eq 'Beide') -and $errListB.Count -gt 0) { $zielMitFehlern.Add("B ($($errListB.Count))") }
-    if (($Kopieren -eq 'BnachA' -or $Kopieren -eq 'Beide') -and $errListA.Count -gt 0) { $zielMitFehlern.Add("A ($($errListA.Count))") }
+    if ($zielB -and $errListB.Count -gt 0) { $zielMitFehlern.Add("B ($($errListB.Count))") }
+    if ($zielA -and $errListA.Count -gt 0) { $zielMitFehlern.Add("A ($($errListA.Count))") }
 
     if ($Ausfuehren -and $zielMitFehlern.Count -gt 0 -and -not $TrotzLesefehler) {
         Write-Host ''
@@ -807,7 +923,10 @@ if ($Kopieren) {
     }
 
     # --- Ausfuehren ----------------------------------------------------------
-    if ($Ausfuehren -and ($planNeu.Count + $planUeber.Count) -gt 0) {
+    # Die Verzweigung haengt allein an -Ausfuehren, nicht daran, ob der Plan
+    # etwas enthaelt: sonst blieben abgewiesene Eintraege ohne Ergebnis stehen
+    # und die Zusammenfassung meldete "Simulation", obwohl ausgefuehrt wurde.
+    if ($Ausfuehren) {
 
         if ($Sicherung -and $planUeber.Count -gt 0) {
             $sicherungDir = Join-Path $OutputFolder "Sicherung_$stamp"
@@ -815,16 +934,16 @@ if ($Kopieren) {
             Write-Host ("Sicherung ueberschriebener Dateien: {0}" -f $sicherungDir) -ForegroundColor DarkGray
         }
 
-        Write-Host 'Kopiere ...' -ForegroundColor Cyan
         $copyAusgefue = $true
         $k = 0
         $gesamt = $planNeu.Count + $planUeber.Count
+        if ($gesamt -gt 0) { Write-Host 'Kopiere ...' -ForegroundColor Cyan }
 
         foreach ($c in $copyRows) {
             if ($c.Aktion -eq 'Uebersprungen') { $c.Ergebnis = 'Uebersprungen'; continue }
 
             $k++
-            Write-Progress -Activity 'Kopieren' -Status "$k / $gesamt" -PercentComplete (($k / $gesamt) * 100)
+            Write-Progress -Activity 'Kopieren' -Status "$k / $gesamt" -PercentComplete (($k / [math]::Max($gesamt, 1)) * 100)
 
             try {
                 if (-not (Test-Path -LiteralPath $c.Quelle)) {
@@ -1020,6 +1139,30 @@ tr[data-status="same"]  td:first-child{border-left:3px solid #10b981}
      border-radius:8px;padding:14px 16px;margin-bottom:18px}
 .done h3{margin:0 0 6px;font-size:15px;color:#065f46}
 .done p{margin:0 0 6px}
+.pick{background:#fff;border:1px solid #e1e5ea;border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.pick h3{margin:0 0 6px;font-size:15px}
+.pick p{margin:0 0 10px;color:#52606d}
+.pick p.pickstep{margin:14px 0 6px}
+.pickbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.pickbar button{padding:6px 12px;border:1px solid #cbd2d9;background:#fff;border-radius:6px;
+     cursor:pointer;font-size:13px}
+.pickbar button:hover{background:#eef2f6}
+.pickbar button.primary{background:#1f2933;color:#fff;border-color:#1f2933}
+.pickbar button.primary:hover{background:#3e4c59}
+.pickbar button[disabled]{opacity:.45;cursor:default}
+.pickinfo{color:#6b7280;font-size:12.5px}
+.cmd{background:#f0f3f6;border:1px solid #e1e5ea;border-radius:6px;padding:10px 12px;
+     font-family:Consolas,"Courier New",monospace;font-size:12.5px;white-space:pre-wrap;
+     word-break:break-all;margin:0 0 10px}
+.pick textarea{width:100%;font-family:Consolas,"Courier New",monospace;font-size:12px;
+     border:1px solid #cbd2d9;border-radius:6px;padding:8px;margin-top:8px}
+.pick summary{cursor:pointer;font-size:13px;color:#52606d}
+td.sel,th.sel{width:1%;text-align:center;white-space:nowrap;padding-left:8px;padding-right:8px}
+th.sel{cursor:default;font-size:12px}
+th.sel:hover{background:#f0f3f6}
+td.sel input{width:16px;height:16px;cursor:pointer}
+tr.picked{background:#eff6ff}
+tr.picked:hover{background:#dbeafe}
 .missing{color:#b91c1c;font-weight:600}
 .neg{color:#b91c1c}.pos{color:#047857}
 footer{margin-top:28px;color:#6b7280;font-size:12.5px}
@@ -1045,6 +1188,9 @@ function initPanel(panel){
   input.addEventListener('input', function(){ applyFilter(panel); });
   var ths = panel.querySelectorAll('th');
   for (var k = 0; k < ths.length; k++){
+    // Ankreuzspalten sind nicht sortierbar - sonst wuerde ein Klick auf die
+    // Spaltenueberschrift die Zeilen unter den gesetzten Haekchen wegsortieren.
+    if (ths[k].classList.contains('sel')) { continue; }
     ths[k].addEventListener('click', function(){ sortTable(this); });
   }
   applyFilter(panel);
@@ -1095,9 +1241,171 @@ function sortTable(th){
   for (var i = 0; i < rows.length; i++){ tbody.appendChild(rows[i]); }
 }
 
+/* ---------------------------------------------------------------------------
+   Auswahl zum Kopieren.
+
+   Eine lokal geoeffnete HTML-Seite darf nicht auf das Dateisystem schreiben.
+   Diese Seite sammelt deshalb nur die Haekchen ein und erzeugt daraus eine
+   Auswahlliste; kopiert wird ausschliesslich vom PowerShell-Script.
+--------------------------------------------------------------------------- */
+
+function pickBox(){ return document.getElementById('auswahl'); }
+
+function pickAllBoxes(){
+  var t = document.querySelectorAll('.panel table');
+  for (var i = 0; i < t.length; i++){
+    var cb = t[i].querySelectorAll('td.sel input');
+    if (cb.length) { return cb; }
+  }
+  return [];
+}
+
+function pickSelected(){
+  var out = [];
+  var cbs = pickAllBoxes();
+  for (var i = 0; i < cbs.length; i++){
+    if (cbs[i].checked){
+      out.push({
+        dir:  cbs[i].classList.contains('cbB') ? 'AnachB' : 'BnachA',
+        rel:  cbs[i].getAttribute('data-rel'),
+        size: parseFloat(cbs[i].getAttribute('data-size')) || 0
+      });
+    }
+  }
+  return out;
+}
+
+function pickHumanSize(b){
+  var u = ['B','KB','MB','GB','TB'], i = 0, v = b;
+  while (v >= 1024 && i < u.length - 1){ v = v / 1024; i++; }
+  return (i === 0 ? v.toFixed(0) : v.toFixed(2)) + ' ' + u[i];
+}
+
+function pickText(){
+  var box = pickBox();
+  var sel = pickSelected();
+  var d = new Date();
+  function p2(n){ return (n < 10 ? '0' : '') + n; }
+  var stamp = d.getFullYear() + '-' + p2(d.getMonth()+1) + '-' + p2(d.getDate()) +
+              ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds());
+  var lines = [];
+  lines.push('# Compare-FolderTrees Auswahl');
+  lines.push('# Erstellt: ' + stamp);
+  lines.push('# A=' + box.getAttribute('data-roota'));
+  lines.push('# B=' + box.getAttribute('data-rootb'));
+  for (var i = 0; i < sel.length; i++){ lines.push(sel[i].dir + '\t' + sel[i].rel); }
+  return lines.join('\r\n') + '\r\n';
+}
+
+function pickUpdate(){
+  var sel = pickSelected();
+  var bytes = 0, nB = 0, nA = 0;
+  for (var i = 0; i < sel.length; i++){
+    bytes += sel[i].size;
+    if (sel[i].dir === 'AnachB') { nB++; } else { nA++; }
+  }
+
+  var cbs = pickAllBoxes();
+  for (var j = 0; j < cbs.length; j++){
+    var tr = cbs[j].parentNode.parentNode;
+    var any = tr.querySelector('td.sel input:checked');
+    if (any) { tr.classList.add('picked'); } else { tr.classList.remove('picked'); }
+  }
+
+  // Umlaute und Gedankenstrich als \u-Escapes: diese Datei bleibt damit reines
+  // ASCII. Windows PowerShell 5.1 liest eine .ps1 ohne BOM als ANSI, wodurch
+  // direkt eingetippte UTF-8-Zeichen im Bericht als Buchstabensalat landen.
+  var txt = (sel.length === 0)
+    ? 'nichts ausgew\u00e4hlt'
+    : sel.length + ' Dateien (' + pickHumanSize(bytes) + ') \u2014 ' + nB + ' nach B, ' + nA + ' nach A';
+  document.getElementById('pickCount').textContent = txt;
+  document.getElementById('pickText').value = pickText();
+
+  var leer = (sel.length === 0);
+  document.getElementById('pickSave').disabled = leer;
+  document.getElementById('pickCopy').disabled = leer;
+
+  var box = pickBox();
+  document.getElementById('pickCmd').textContent =
+    '.\\Compare-FolderTrees.ps1 -PfadA "' + box.getAttribute('data-roota') + '" ' +
+    '-PfadB "' + box.getAttribute('data-rootb') + '" ' +
+    '-Auswahl "<Pfad zur gespeicherten Liste>" -Ausfuehren';
+}
+
+function pickSetVisible(dirClass){
+  var rows = document.querySelectorAll('.panel table tbody tr');
+  for (var i = 0; i < rows.length; i++){
+    if (rows[i].style.display === 'none') { continue; }
+    var want  = rows[i].querySelector('td.sel input.' + dirClass);
+    var other = rows[i].querySelector('td.sel input.' + (dirClass === 'cbB' ? 'cbA' : 'cbB'));
+    if (want) { want.checked = true; if (other) { other.checked = false; } }
+  }
+  pickUpdate();
+}
+
+function initPick(){
+  var box = pickBox();
+  if (!box) { return; }
+
+  var cbs = pickAllBoxes();
+  for (var i = 0; i < cbs.length; i++){
+    cbs[i].addEventListener('change', function(){
+      // Pro Zeile nur eine Richtung - sonst waere unklar, was gemeint ist.
+      if (this.checked){
+        var tr = this.parentNode.parentNode;
+        var andere = tr.querySelectorAll('td.sel input');
+        for (var j = 0; j < andere.length; j++){
+          if (andere[j] !== this) { andere[j].checked = false; }
+        }
+      }
+      pickUpdate();
+    });
+  }
+
+  document.getElementById('pickAllB').addEventListener('click', function(){ pickSetVisible('cbB'); });
+  document.getElementById('pickAllA').addEventListener('click', function(){ pickSetVisible('cbA'); });
+  document.getElementById('pickClear').addEventListener('click', function(){
+    var c = pickAllBoxes();
+    for (var i = 0; i < c.length; i++){ c[i].checked = false; }
+    pickUpdate();
+  });
+
+  document.getElementById('pickSave').addEventListener('click', function(){
+    var hint = document.getElementById('pickHint');
+    try {
+      var blob = new Blob([pickText()], {type: 'text/plain;charset=utf-8'});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'Auswahl.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+      hint.textContent = 'gespeichert als Auswahl.txt (meist im Download-Ordner)';
+    } catch (e) {
+      hint.textContent = 'Speichern nicht m\u00f6glich \u2014 bitte den Text unten kopieren';
+    }
+  });
+
+  document.getElementById('pickCopy').addEventListener('click', function(){
+    var hint = document.getElementById('pickHint');
+    var ta = document.getElementById('pickText');
+    ta.removeAttribute('readonly');
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.setAttribute('readonly', 'readonly');
+    window.getSelection().removeAllRanges();
+    hint.textContent = ok ? 'in die Zwischenablage kopiert' : 'Kopieren nicht m\u00f6glich \u2014 Text unten manuell markieren';
+  });
+
+  pickUpdate();
+}
+
 document.addEventListener('DOMContentLoaded', function(){
   var panels = document.querySelectorAll('.panel');
   for (var i = 0; i < panels.length; i++){ initPanel(panels[i]); }
+  initPick();
 });
 '@
 
@@ -1232,7 +1540,9 @@ $null = $sb.AppendLine('<h2>2. Dateien</h2>')
 $null = $sb.AppendLine('<div class="panel">')
 $null = $sb.AppendLine((New-Toolbar -OnlyA $fOnlyA -OnlyB $fOnlyB -Diff $fDiff -Same $fSame))
 $null = $sb.AppendLine('<div class="scroll"><table><thead><tr>')
-$null = $sb.AppendLine('<th>Status</th><th>Dateiname</th><th>Verzeichnis (relativ)</th><th class="num">Gr&ouml;&szlig;e A</th><th class="num">Gr&ouml;&szlig;e B</th><th>Ge&auml;ndert A</th><th>Ge&auml;ndert B</th><th>Unterschied</th>')
+$null = $sb.AppendLine('<th class="sel" title="Diese Datei von A nach B kopieren">&rarr;&nbsp;B</th>' +
+    '<th class="sel" title="Diese Datei von B nach A kopieren">&rarr;&nbsp;A</th>' +
+    '<th>Status</th><th>Dateiname</th><th>Verzeichnis (relativ)</th><th class="num">Gr&ouml;&szlig;e A</th><th class="num">Gr&ouml;&szlig;e B</th><th>Ge&auml;ndert A</th><th>Ge&auml;ndert B</th><th>Unterschied</th>')
 $null = $sb.AppendLine('</tr></thead><tbody>')
 
 foreach ($f in $fileRows) {
@@ -1255,7 +1565,26 @@ foreach ($f in $fileRows) {
                      '<br>B: ' + (ConvertTo-HtmlText $f.DateinameB)
     }
 
+    # Ankreuzfelder nur dort, wo die jeweilige Richtung ueberhaupt moeglich ist:
+    # Quelle muss vorhanden sein, und bei identischen Dateien gibt es nichts zu tun.
+    $relAttr = ConvertTo-HtmlText $f.RelativerPfad
+    $selB = '<td class="sel"></td>'
+    $selA = '<td class="sel"></td>'
+    if ($f.Status -ne 'Identisch') {
+        if ($f.PfadA -ne '') {
+            $selB = '<td class="sel"><input type="checkbox" class="cbB" data-rel="' + $relAttr +
+                    '" data-size="' + $(if ($null -ne $f.GroesseA_Bytes) { $f.GroesseA_Bytes } else { 0 }) +
+                    '" title="nach B kopieren"></td>'
+        }
+        if ($f.PfadB -ne '') {
+            $selA = '<td class="sel"><input type="checkbox" class="cbA" data-rel="' + $relAttr +
+                    '" data-size="' + $(if ($null -ne $f.GroesseB_Bytes) { $f.GroesseB_Bytes } else { 0 }) +
+                    '" title="nach A kopieren"></td>'
+        }
+    }
+
     $null = $sb.AppendLine('<tr data-status="' + $k + '" data-search="' + (ConvertTo-HtmlText $search) + '">' +
+        $selB + $selA +
         '<td data-sort="' + $f.Status + '"><span class="badge b-' + $k + '">' + (ConvertTo-HtmlText $f.Status) + '</span></td>' +
         '<td class="path">' + $nameZelle + '</td>' +
         '<td class="path">' + (ConvertTo-HtmlText $verz) + '</td>' +
@@ -1265,6 +1594,27 @@ foreach ($f in $fileRows) {
         '<td>' + (ConvertTo-HtmlText $f.Unterschied) + '</td></tr>')
 }
 $null = $sb.AppendLine('</tbody></table></div></div>')
+
+# ---- Auswahlkasten unter der Dateitabelle ----
+$null = $sb.AppendLine('<div class="pick" id="auswahl" data-roota="' + (ConvertTo-HtmlText $idxA.Root) +
+    '" data-rootb="' + (ConvertTo-HtmlText $idxB.Root) + '">')
+$null = $sb.AppendLine('<h3>Auswahl zum Kopieren</h3>')
+$null = $sb.AppendLine('<p>In der Tabelle oben je Datei ankreuzen, in welche Richtung sie kopiert werden soll. ' +
+    'Diese Seite kann selbst nichts schreiben &mdash; sie erzeugt eine Auswahlliste, die das Script ausf&uuml;hrt.</p>')
+$null = $sb.AppendLine('<div class="pickbar">' +
+    '<button type="button" id="pickAllB">Alle sichtbaren &rarr; B</button>' +
+    '<button type="button" id="pickAllA">Alle sichtbaren &rarr; A</button>' +
+    '<button type="button" id="pickClear">Auswahl leeren</button>' +
+    '<span class="pickinfo" id="pickCount">nichts ausgew&auml;hlt</span></div>')
+$null = $sb.AppendLine('<div class="pickbar">' +
+    '<button type="button" id="pickSave" class="primary">Auswahlliste speichern</button>' +
+    '<button type="button" id="pickCopy">In Zwischenablage</button>' +
+    '<span class="pickinfo" id="pickHint"></span></div>')
+$null = $sb.AppendLine('<p class="pickstep">Danach im Script &uuml;bergeben &mdash; erst ohne, dann mit <code>-Ausfuehren</code>:</p>')
+$null = $sb.AppendLine('<pre id="pickCmd" class="cmd"></pre>')
+$null = $sb.AppendLine('<details><summary>Liste zum Abtippen oder manuellen Kopieren</summary>' +
+    '<textarea id="pickText" rows="8" readonly></textarea></details>')
+$null = $sb.AppendLine('</div>')
 
 # ---- Tabelle 3: Kopieren ----
 if ($copyRows.Count -gt 0) {

@@ -4,7 +4,7 @@
 
               Zwei Ordnerstrukturen vergleichen - HTML-Bericht und CSV
 
-                                 Version 1.4
+                                 Version 1.5
 
 ===============================================================================
 
@@ -234,6 +234,10 @@
   -TrotzLesefehler              Auch kopieren, wenn die Zielseite nicht
                                 vollstaendig gelesen werden konnte.
 
+  -Auswahl <Datei>              Pfad zu einer Auswahlliste, die im HTML-Bericht
+                                zusammengeklickt wurde. Kopiert wird dann
+                                genau das, was dort steht.
+
 
 -------------------------------------------------------------------------------
   7   KOPIEREN
@@ -301,6 +305,60 @@
 
   Zeitstempel werden beim Kopieren uebernommen. Ein zweiter Lauf findet die
   Dateien deshalb als identisch vor und kopiert nichts erneut.
+
+
+  EINZELNE DATEIEN IM BERICHT ANKREUZEN
+  .....................................
+
+  Statt ganzer Kategorien lassen sich auch einzelne Dateien auswaehlen. Die
+  Dateitabelle hat dafuer zwei Ankreuzspalten ganz links:
+
+      -> B    diese Datei von A nach B kopieren
+      -> A    diese Datei von B nach A kopieren
+
+  Pro Zeile ist nur eine Richtung moeglich; das zweite Haekchen schaltet das
+  erste ab. Angeboten wird nur, was auch geht:
+
+      Nur in A ........... nur "-> B"
+      Nur in B ........... nur "-> A"
+      Unterschiedlich .... beides
+      Identisch .......... keine Ankreuzfelder
+
+  Unter der Tabelle zeigt ein Kasten laufend mit, wie viele Dateien und wie
+  viel Datenmenge ausgewaehlt sind, getrennt nach Richtung. Die Schaltflaechen
+  "Alle sichtbaren -> B" und "-> A" wirken nur auf die gerade gefilterten
+  Zeilen. Damit laesst sich ueber den Filter "Nur Abweichungen" vorsortieren
+  und dann alles auf einmal ankreuzen.
+
+
+  WARUM UEBER EINE LISTE UND NICHT DIREKT
+  .......................................
+
+  Eine lokal geoeffnete HTML-Seite darf aus Sicherheitsgruenden nicht auf das
+  Dateisystem schreiben - das erlaubt kein Browser. Der Bericht sammelt
+  deshalb nur die Haekchen ein und erzeugt daraus eine Auswahlliste. Kopiert
+  wird ausschliesslich vom Script, mit denselben Schutzmassnahmen wie sonst.
+
+      1) Im Bericht ankreuzen, dann "Auswahlliste speichern".
+         Sie landet ueblicherweise als Auswahl.txt im Download-Ordner.
+
+      2) Ansehen, was passieren wuerde:
+
+         .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Auswahl "...\Auswahl.txt"
+
+      3) Ausfuehren:
+
+         .\Compare-FolderTrees.ps1 -PfadA "D:\Daten" -PfadB "E:\Backup" -Auswahl "...\Auswahl.txt" -Ausfuehren
+
+  Den fertigen Befehl zeigt der Bericht unter den Schaltflaechen an. Blockiert
+  der Browser das Speichern, steht die Liste zusaetzlich zum Kopieren in einem
+  aufklappbaren Textfeld.
+
+  Die Auswahlliste merkt sich, zu welchem Ordnerpaar sie gehoert. Wird sie
+  versehentlich auf andere Ordner angewendet, bricht das Script ab und nennt
+  beide Pfadpaare. Eintraege, die nicht mehr zum aktuellen Vergleich passen -
+  etwa weil der Bericht veraltet ist -, werden einzeln gemeldet und
+  uebersprungen, statt irgendetwas zu raten.
 
 
   ERGEBNIS
@@ -379,6 +437,20 @@
 -------------------------------------------------------------------------------
   10   AENDERUNGEN
 -------------------------------------------------------------------------------
+
+  VERSION 1.5
+
+      NEU - Dateien im Bericht ankreuzen. Die Dateitabelle hat zwei
+      Ankreuzspalten "-> B" und "-> A", pro Zeile gegenseitig ausschliessend
+      und nur dort angeboten, wo die Richtung ueberhaupt moeglich ist. Ein
+      Kasten unter der Tabelle zaehlt die Auswahl mit und erzeugt daraus eine
+      Auswahlliste, die das Script ueber -Auswahl ausfuehrt. Die Liste ist an
+      ihr Ordnerpaar gebunden; auf andere Ordner angewendet bricht das Script
+      ab. Einzelheiten in Abschnitt 7.
+
+      KORREKTUR - Mit -Ausfuehren, aber leerem Kopierplan blieben abgewiesene
+      Eintraege ohne Ergebnis stehen, und die Zusammenfassung meldete
+      "Simulation", obwohl ausgefuehrt wurde.
 
   VERSION 1.4
 
